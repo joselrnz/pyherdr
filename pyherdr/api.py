@@ -1,0 +1,869 @@
+from __future__ import annotations
+
+import os
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from .config import load_config
+from .contracts.api import ApiError, ApiRequest, ApiResponse
+from .cron import parse_cron
+from .detect import detect, identify_agent_in_command, parse_agent_label
+from .detector import detect_agent_status
+from .layout import Direction, PaneNode, TileLayout
+from .models import AgentStatus, AppState, Pane, Tab
+from .notification import Notification, deliver
+from .runtime import TerminalManager
+from .runtime.procstats import AVAILABLE as STATS_AVAILABLE
+from .store import to_dict
+from .worktree import create_worktree, list_worktrees, remove_worktree
+
+
+def dispatch(state: AppState, request: dict[str, Any], processes: TerminalManager | None = None) -> dict[str, Any]:
+    try:
+        parsed = ApiRequest.model_validate(request)
+        result = _dispatch_method(state, parsed.method, parsed.params, processes)
+        return ApiResponse(id=parsed.id, result=result).model_dump(mode="json", exclude_none=True)
+    except ValidationError as error:
+        request_id = str(request.get("id") or "request")
+        api_error = ApiError(code="invalid_request", message=str(error))
+        return ApiResponse(id=request_id, error=api_error).model_dump(mode="json", exclude_none=True)
+    except (KeyError, ValueError, TypeError) as error:
+        request_id = str(request.get("id") or "request")
+        api_error = ApiError(code="invalid_request", message=str(error))
+        return ApiResponse(id=request_id, error=api_error).model_dump(mode="json", exclude_none=True)
+    except (RuntimeError, OSError) as error:
+        # PTY/session I/O failures (e.g. writing to a pane whose process exited)
+        # become a structured error instead of crashing the handler thread.
+        request_id = str(request.get("id") or "request")
+        api_error = ApiError(code="runtime_error", message=str(error))
+        return ApiResponse(id=request_id, error=api_error).model_dump(mode="json", exclude_none=True)
+
+
+def _dispatch_method(
+    state: AppState,
+    method: str,
+    params: dict[str, Any],
+    processes: TerminalManager | None,
+) -> dict[str, Any]:
+    handlers: dict[str, Callable[[AppState, dict[str, Any], TerminalManager | None], dict[str, Any]]] = {
+        "ping": _ping,
+        "state.get": _state_get,
+        "stats.get": _stats_get,
+        "notification.show": _notification_show,
+        "workspace.create": _workspace_create,
+        "workspace.get": _workspace_get,
+        "workspace.list": _workspace_list,
+        "workspace.focus": _workspace_focus,
+        "workspace.rename": _workspace_rename,
+        "workspace.move": _workspace_move,
+        "workspace.close": _workspace_close,
+        "worktree.list": _worktree_list,
+        "worktree.create": _worktree_create,
+        "worktree.open": _worktree_open,
+        "worktree.remove": _worktree_remove,
+        "tab.create": _tab_create,
+        "tab.get": _tab_get,
+        "tab.list": _tab_list,
+        "tab.focus": _tab_focus,
+        "tab.rename": _tab_rename,
+        "tab.move": _tab_move,
+        "tab.close": _tab_close,
+        "tab.sync": _tab_sync,
+        "pane.list": _pane_list,
+        "pane.get": _pane_get,
+        "pane.create": _pane_create,
+        "pane.split": _pane_split,
+        "pane.set_layout": _pane_set_layout,
+        "pane.rename": _pane_rename,
+        "pane.close": _pane_close,
+        "pane.read": _pane_read,
+        "pane.run": _pane_run,
+        "pane.start": _pane_start,
+        "pane.send_text": _pane_send_text,
+        "pane.send_key": _pane_send_key,
+        "pane.resize": _pane_resize,
+        "pane.scroll": _pane_scroll,
+        "pane.stop": _pane_stop,
+        "pane.report_agent": _pane_report_agent,
+        "pane.broadcast": _pane_broadcast,
+        "agent.list": _agent_list,
+        "agent.get": _agent_get,
+        "agent.read": _agent_read,
+        "agent.send": _agent_send,
+        "agent.rename": _agent_rename,
+        "agent.focus": _agent_focus,
+        "agent.start": _agent_start,
+        "schedule.add": _schedule_add,
+        "schedule.list": _schedule_list,
+        "schedule.remove": _schedule_remove,
+        "schedule.run": _schedule_run,
+    }
+    try:
+        handler = handlers[method]
+    except KeyError as error:
+        raise ValueError(f"unknown method: {method}") from error
+    return handler(state, params, processes)
+
+
+def _ping(_state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    return {"type": "pong", "server": "pyherdr"}
+
+
+def _stats_get(_state: AppState, _params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    """Return the latest per-pane CPU/RAM snapshot gathered by the server sampler."""
+    snapshot = processes.stats_snapshot() if processes else {}
+    return {"type": "stats", "available": STATS_AVAILABLE, "stats": snapshot}
+
+
+def _ensure_layout(tab: Tab) -> TileLayout:
+    """Repair/build the tab's BSP layout so its panes match ``tab.panes``.
+
+    Panes added/removed outside of ``pane.split`` (CLI ``pane.create``, bootstrap,
+    ``pane.close``) leave the layout out of sync; this reconciles it (new panes are
+    appended as side-by-side splits; gone panes are closed and the tree reflows).
+    """
+    ids = [pane.id for pane in tab.panes]
+    if not ids:
+        tab.layout = {}
+        return TileLayout(PaneNode(""), "")
+    layout: TileLayout | None = None
+    if tab.layout:
+        try:
+            layout = TileLayout.from_dict(tab.layout)
+        except (KeyError, ValueError, TypeError):
+            layout = None
+    if layout is None:
+        layout = TileLayout.single(ids[0])
+        for pane_id in ids[1:]:
+            layout.split_focused(pane_id, Direction.HORIZONTAL)
+    else:
+        for gone in set(layout.pane_ids()) - set(ids):
+            layout.close_pane(gone)
+        for pane_id in ids:
+            if pane_id not in layout.pane_ids():
+                layout.split_focused(pane_id, Direction.HORIZONTAL)
+    if tab.focused_pane_id and layout.contains(tab.focused_pane_id):
+        layout.focus = tab.focused_pane_id
+    else:
+        tab.focused_pane_id = layout.focus or ids[0]
+    tab.layout = layout.to_dict()
+    return layout
+
+
+def _state_get(state: AppState, _params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    # Keep each tab's split-tree layout in sync with its pane list before serializing.
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            _ensure_layout(tab)
+    data = to_dict(state)
+    # Annotate each pane with whether it has a live PTY session right now, so the
+    # UI can tell a persisted-but-dead pane (after a restart) from a live one.
+    running = set(processes.running_pane_ids()) if processes else set()
+    for workspace in data.get("workspaces", []):
+        for tab in workspace.get("tabs", []):
+            for pane in tab.get("panes", []):
+                pane["running"] = pane.get("id") in running
+    return {"type": "state", "state": data}
+
+
+def _notification_show(_state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    notification = Notification(
+        title=_required(params, "title"),
+        body=str(params.get("body") or ""),
+        position=str(params.get("position") or "bottom-right"),
+        sound=str(params.get("sound") or "none"),
+    )
+    delivered = deliver(notification, load_config().ui.toast.delivery)
+    return {"type": "notification_shown", "title": notification.title, "delivered": delivered}
+
+
+def _workspace_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace = state.create_workspace(
+        label=str(params.get("label") or "workspace"),
+        cwd=str(params.get("cwd") or "."),
+    )
+    state.create_tab(workspace.id, "shell")
+    return {"type": "workspace_created", "workspace": _workspace_record(workspace)}
+
+
+def _workspace_list(state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    return {
+        "type": "workspace_list",
+        "workspaces": [_workspace_record(workspace) for workspace in state.workspaces],
+        "focused_workspace_id": state.focused_workspace_id,
+    }
+
+
+def _workspace_get(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace = state.require_workspace(_required(params, "workspace_id"))
+    return {"type": "workspace_info", "workspace": _workspace_record(workspace)}
+
+
+def _workspace_focus(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = _required(params, "workspace_id")
+    workspace = state.require_workspace(workspace_id)
+    state.focused_workspace_id = workspace.id
+    return {"type": "workspace_focused", "workspace": _workspace_record(workspace)}
+
+
+def _workspace_rename(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace = state.require_workspace(_required(params, "workspace_id"))
+    workspace.label = str(params.get("label") or workspace.label)
+    return {"type": "workspace_renamed", "workspace": _workspace_record(workspace)}
+
+
+def _workspace_close(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = _required(params, "workspace_id")
+    before = len(state.workspaces)
+    state.workspaces = [workspace for workspace in state.workspaces if workspace.id != workspace_id]
+    closed = len(state.workspaces) != before
+    if state.focused_workspace_id == workspace_id:
+        state.focused_workspace_id = state.workspaces[0].id if state.workspaces else None
+    return {"type": "workspace_closed", "workspace_id": workspace_id, "closed": closed}
+
+
+def _focused_cwd(state: AppState) -> str:
+    workspace = state.focused_workspace
+    return workspace.cwd if workspace else "."
+
+
+def _worktree_list(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    cwd = str(params.get("cwd") or _focused_cwd(state))
+    worktrees = list_worktrees(cwd)
+    return {
+        "type": "worktree_list",
+        "worktrees": [{"path": wt.path, "branch": wt.branch, "head": wt.head} for wt in worktrees],
+    }
+
+
+def _worktree_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    cwd = str(params.get("cwd") or _focused_cwd(state))
+    branch = _required(params, "branch")
+    base = params.get("base")
+    path = params.get("path")
+    directory = load_config().worktrees.directory
+    created = create_worktree(cwd, branch, str(base) if base else None, str(path) if path else None, directory)
+    workspace = state.create_workspace(str(params.get("label") or branch), created)
+    state.create_tab(workspace.id, "shell")
+    return {"type": "worktree_created", "path": created, "workspace": _workspace_record(workspace)}
+
+
+def _worktree_open(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    path = _required(params, "path")
+    workspace = state.create_workspace(str(params.get("label") or Path(path).name), path)
+    state.create_tab(workspace.id, "shell")
+    return {"type": "worktree_opened", "path": path, "workspace": _workspace_record(workspace)}
+
+
+def _worktree_remove(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    path = _required(params, "path")
+    force = bool(params.get("force"))
+    remove_worktree(_focused_cwd(state), path, force)
+    return {"type": "worktree_removed", "path": path}
+
+
+def _tab_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    tab = state.create_tab(workspace_id, str(params.get("label") or "shell"))
+    if tab.focused_pane:
+        tab.focused_pane.cwd = _resolve_new_cwd(workspace.cwd)
+    return {"type": "tab_created", "tab": _tab_record(tab)}
+
+
+def _tab_list(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    return {
+        "type": "tab_list",
+        "tabs": [_tab_record(tab) for tab in workspace.tabs],
+        "focused_tab_id": workspace.focused_tab_id,
+    }
+
+
+def _tab_get(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    tab = state.require_tab(workspace_id, _required(params, "tab_id"))
+    return {"type": "tab_info", "tab": _tab_record(tab)}
+
+
+def _tab_focus(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    tab = state.require_tab(workspace.id, _required(params, "tab_id"))
+    workspace.focused_tab_id = tab.id
+    return {"type": "tab_focused", "tab": _tab_record(tab)}
+
+
+def _tab_rename(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    tab = state.require_tab(workspace_id, _required(params, "tab_id"))
+    tab.label = str(params.get("label") or tab.label)
+    return {"type": "tab_renamed", "tab": _tab_record(tab)}
+
+
+def _workspace_move(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = _required(params, "workspace_id")
+    direction = "down" if str(params.get("direction") or "up").lower() == "down" else "up"
+    ids = [workspace.id for workspace in state.workspaces]
+    if workspace_id not in ids:
+        raise KeyError(f"workspace not found: {workspace_id}")
+    index = ids.index(workspace_id)
+    target = index - 1 if direction == "up" else index + 1
+    if 0 <= target < len(state.workspaces):
+        state.workspaces[index], state.workspaces[target] = state.workspaces[target], state.workspaces[index]
+    return {"type": "workspace_moved", "workspace_id": workspace_id, "direction": direction}
+
+
+def _tab_move(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    tab_id = _required(params, "tab_id")
+    direction = "right" if str(params.get("direction") or "left").lower() == "right" else "left"
+    ids = [tab.id for tab in workspace.tabs]
+    if tab_id not in ids:
+        raise KeyError(f"tab not found: {tab_id}")
+    index = ids.index(tab_id)
+    target = index - 1 if direction == "left" else index + 1
+    if 0 <= target < len(workspace.tabs):
+        workspace.tabs[index], workspace.tabs[target] = workspace.tabs[target], workspace.tabs[index]
+    return {"type": "tab_moved", "tab_id": tab_id, "direction": direction}
+
+
+def _tab_close(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    tab_id = _required(params, "tab_id")
+    before = len(workspace.tabs)
+    workspace.tabs = [tab for tab in workspace.tabs if tab.id != tab_id]
+    closed = len(workspace.tabs) != before
+    if workspace.focused_tab_id == tab_id:
+        workspace.focused_tab_id = workspace.tabs[0].id if workspace.tabs else None
+    return {"type": "tab_closed", "workspace_id": workspace.id, "tab_id": tab_id, "closed": closed}
+
+
+def _pane_list(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = params.get("workspace_id")
+    tab_id = params.get("tab_id")
+    panes: list[dict[str, Any]] = []
+    for workspace in state.workspaces:
+        if workspace_id and workspace.id != workspace_id:
+            continue
+        for tab in workspace.tabs:
+            if tab_id and tab.id != tab_id:
+                continue
+            panes.extend(_pane_record(pane, workspace.id, tab.id) for pane in tab.panes)
+    return {"type": "pane_list", "panes": panes}
+
+
+def _pane_get(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane = state.require_pane(_required(params, "pane_id"))
+    workspace_id, tab_id = _pane_context(state, pane.id)
+    return {"type": "pane_info", "pane": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _resolve_new_cwd(follow_cwd: str) -> str:
+    """Resolve the cwd for a new pane/tab from the ``terminal.new_cwd`` policy.
+
+    ``follow`` (default) inherits ``follow_cwd``; ``home``/``current`` use those;
+    ``path:<dir>`` or a bare path is used literally (``~`` expanded).
+    """
+    try:
+        policy = (load_config().terminal.new_cwd or "follow").strip()
+    except Exception:
+        return follow_cwd
+    low = policy.lower()
+    if low in ("follow", ""):
+        return follow_cwd
+    if low in ("home", "~"):
+        return os.path.expanduser("~")
+    if low in ("current", "."):
+        return os.getcwd()
+    if low.startswith("path:"):
+        return os.path.expanduser(policy[5:].strip()) or follow_cwd
+    return os.path.expanduser(policy) or follow_cwd
+
+
+def _pane_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    if tab_id:
+        tab = state.require_tab(workspace.id, str(tab_id))
+    else:
+        focused = workspace.focused_tab
+        if focused is None:
+            raise ValueError("workspace has no tab for the new pane")
+        tab = focused
+    follow = tab.focused_pane.cwd if tab.focused_pane else workspace.cwd
+    pane = state.create_pane(workspace.id, tab.id, title=str(params.get("title") or "pane"))
+    pane.cwd = _resolve_new_cwd(follow)
+    return {"type": "pane_created", "pane": _pane_record(pane, workspace.id, tab.id)}
+
+
+def _pane_split(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    tab = state.require_tab(workspace.id, str(tab_id)) if tab_id else workspace.focused_tab
+    if tab is None:
+        raise ValueError("workspace has no tab to split")
+    try:
+        direction = Direction(str(params.get("direction") or "horizontal").lower())
+    except ValueError:
+        direction = Direction.HORIZONTAL
+    ratio = float(params.get("ratio") or 0.5)
+    target = tab.focused_pane_id
+    follow = next((pane.cwd for pane in tab.panes if pane.id == target), workspace.cwd)
+    layout = _ensure_layout(tab)
+    pane = state.create_pane(workspace.id, tab.id, title=str(params.get("title") or "pane"))
+    pane.cwd = _resolve_new_cwd(follow)
+    if target and layout.contains(target):
+        layout.focus = target
+    layout.split_focused(pane.id, direction, ratio)
+    tab.focused_pane_id = pane.id
+    tab.layout = layout.to_dict()
+    return {"type": "pane_split", "direction": direction.value, "pane": _pane_record(pane, workspace.id, tab.id)}
+
+
+def _pane_set_layout(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    tab = state.require_tab(workspace.id, str(tab_id)) if tab_id else workspace.focused_tab
+    if tab is None:
+        raise ValueError("workspace has no tab")
+    layout_data = params.get("layout")
+    if not isinstance(layout_data, dict):
+        raise ValueError("layout must be an object")
+    try:
+        layout = TileLayout.from_dict(layout_data)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError(f"invalid layout: {exc}") from exc
+    # Only accept a layout whose panes exactly match the tab's panes.
+    if set(layout.pane_ids()) != {pane.id for pane in tab.panes}:
+        raise ValueError("layout panes do not match tab panes")
+    tab.layout = layout.to_dict()
+    return {"type": "pane_layout_set", "tab_id": tab.id}
+
+
+def _pane_rename(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane = state.require_pane(_required(params, "pane_id"))
+    pane.title = str(params.get("title") or pane.title)
+    workspace_id, tab_id = _pane_context(state, pane.id)
+    return {"type": "pane_renamed", "pane": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _pane_close(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    pane_id = _required(params, "pane_id")
+    if processes is not None:
+        processes.stop(pane_id)
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            before = len(tab.panes)
+            tab.panes = [pane for pane in tab.panes if pane.id != pane_id]
+            if len(tab.panes) != before:
+                if tab.focused_pane_id == pane_id:
+                    tab.focused_pane_id = tab.panes[0].id if tab.panes else None
+                return {"type": "pane_closed", "pane_id": pane_id, "closed": True}
+    return {"type": "pane_closed", "pane_id": pane_id, "closed": False}
+
+
+def _pane_scroll(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.scroll requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    direction = "down" if str(params.get("direction") or "up").lower() == "down" else "up"
+    try:
+        processes.scroll(pane.id, direction)
+    except KeyError:
+        pass
+    return {"type": "pane_scroll", "pane_id": pane.id, "direction": direction}
+
+
+def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    pane = state.require_pane(_required(params, "pane_id"))
+    lines = int(params.get("lines") or 80)
+    styled = bool(params.get("styled"))
+    if processes is not None:
+        try:
+            # A terminal session, once started, is the source of truth for the
+            # pane's screen; don't mix in stale one-shot `pane.run` output.
+            if styled:
+                # Styled reads return the ANSI-rendered visible screen for the live
+                # terminal view; the plain snapshot still drives agent detection.
+                output = processes.render_styled(pane.id, cursor=bool(params.get("cursor")))
+                _update_status_from_screen(pane, processes.read(pane.id, lines))
+            else:
+                output = processes.read(pane.id, lines)
+                _update_status_from_screen(pane, output)
+        except KeyError:
+            output = "\n".join(pane.output[-lines:])
+    else:
+        output = "\n".join(pane.output[-lines:])
+    return {
+        "type": "pane_read",
+        "pane_id": pane.id,
+        "output": output,
+    }
+
+
+def _update_status_from_screen(pane: Pane, output: str) -> None:
+    """Refresh a pane's agent status from its live screen via per-agent detection."""
+    if not pane.agent:
+        return
+    agent = parse_agent_label(pane.agent)
+    if agent is None:
+        return
+    detection = detect(agent, output)
+    if not detection.skip_state_update:
+        pane.status = detection.state
+
+
+def _pane_run(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane = state.require_pane(_required(params, "pane_id"))
+    command = _required(params, "command")
+    pane.command = command
+    pane.status = AgentStatus.WORKING
+    pane.append_output(f"$ {command}")
+    process = subprocess.run(
+        command,
+        cwd=pane.cwd or None,
+        shell=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    pane.append_output(process.stdout or "")
+    joined = "\n".join(pane.output)
+    run_agent = identify_agent_in_command(command)
+    pane.status = detect(run_agent, joined).state if run_agent else detect_agent_status(joined)
+    if process.returncode != 0:
+        pane.status = AgentStatus.BLOCKED
+    elif pane.status not in (AgentStatus.BLOCKED, AgentStatus.WORKING):
+        pane.status = AgentStatus.DONE
+    pane.append_output(f"[exit {process.returncode}]")
+    workspace_id, tab_id = _pane_context(state, pane.id)
+    return {
+        "type": "pane_run",
+        "pane": _pane_record(pane, workspace_id, tab_id),
+        "exit_code": process.returncode,
+    }
+
+
+def _pane_start(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.start requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    command = _required(params, "command")
+    started = processes.start(pane.id, command, pane.cwd)
+    # Only relabel the pane if a session was actually started; a False return
+    # means one was already running and we must not clobber its metadata.
+    if started:
+        pane.command = command
+        detected_agent = identify_agent_in_command(command)
+        pane.agent = detected_agent.value if detected_agent else ""
+        pane.status = AgentStatus.WORKING
+    workspace_id, tab_id = _pane_context(state, pane.id)
+    return {
+        "type": "pane_start",
+        "started": started,
+        "pane": _pane_record(pane, workspace_id, tab_id),
+    }
+
+
+def _pane_send_text(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.send_text requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    text = str(params.get("text") or "")
+    processes.send_text(pane.id, text)
+    tab = _tab_for_pane(state, pane.id)
+    if tab is not None and tab.synchronized:
+        processes.broadcast([sibling.id for sibling in tab.panes if sibling.id != pane.id], text)
+    return {"type": "pane_send_text", "pane_id": pane.id, "bytes": len(text.encode("utf-8"))}
+
+
+def _pane_send_key(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.send_key requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    key = _required(params, "key")
+    processes.send_key(pane.id, key)
+    return {"type": "pane_send_key", "pane_id": pane.id, "key": key}
+
+
+def _pane_resize(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.resize requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    rows = int(params.get("rows") or 24)
+    cols = int(params.get("cols") or 80)
+    if rows <= 0 or cols <= 0:
+        raise ValueError("pane.resize requires positive rows and cols")
+    processes.resize(pane.id, rows, cols)
+    return {"type": "pane_resize", "pane_id": pane.id, "rows": rows, "cols": cols}
+
+
+def _pane_stop(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.stop requires a server process manager")
+    pane = state.require_pane(_required(params, "pane_id"))
+    stopped = processes.stop(pane.id)
+    if stopped:
+        pane.status = AgentStatus.IDLE
+    return {"type": "pane_stop", "pane_id": pane.id, "stopped": stopped}
+
+
+def _pane_report_agent(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane = state.require_pane(_required(params, "pane_id"))
+    pane.status = AgentStatus(str(params.get("state") or AgentStatus.UNKNOWN.value))
+    pane.custom_status = str(params.get("custom_status") or params.get("message") or "")
+    workspace_id, tab_id = _pane_context(state, pane.id)
+    return {"type": "pane_agent_reported", "pane": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _resolve_agent(state: AppState, target: str) -> tuple[Pane, str, str]:
+    """Resolve an agent target (pane id, agent label, or pane title) to a pane."""
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            for pane in tab.panes:
+                if pane.id == target:
+                    return pane, workspace.id, tab.id
+    lowered = target.strip().lower()
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            for pane in tab.panes:
+                if pane.agent.lower() == lowered or pane.title.lower() == lowered:
+                    return pane, workspace.id, tab.id
+    raise KeyError(f"agent not found: {target}")
+
+
+def _agent_list(state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    agents = [
+        _pane_record(pane, workspace.id, tab.id)
+        for workspace in state.workspaces
+        for tab in workspace.tabs
+        for pane in tab.panes
+        if pane.agent
+    ]
+    return {"type": "agent_list", "agents": agents}
+
+
+def _agent_get(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane, workspace_id, tab_id = _resolve_agent(state, _required(params, "target"))
+    return {"type": "agent_info", "agent": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _agent_read(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    pane, _workspace_id, _tab_id = _resolve_agent(state, _required(params, "target"))
+    lines = int(params.get("lines") or 80)
+    if processes is not None:
+        try:
+            output = processes.read(pane.id, lines)
+        except KeyError:
+            output = "\n".join(pane.output[-lines:])
+        else:
+            _update_status_from_screen(pane, output)
+    else:
+        output = "\n".join(pane.output[-lines:])
+    return {"type": "agent_read", "pane_id": pane.id, "output": output}
+
+
+def _agent_send(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("agent.send requires a server process manager")
+    pane, _workspace_id, _tab_id = _resolve_agent(state, _required(params, "target"))
+    text = str(params.get("text") or "")
+    processes.send_text(pane.id, text)
+    return {"type": "agent_send", "pane_id": pane.id, "bytes": len(text.encode("utf-8"))}
+
+
+def _agent_rename(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane, workspace_id, tab_id = _resolve_agent(state, _required(params, "target"))
+    pane.title = str(params.get("name") or pane.title)
+    return {"type": "agent_renamed", "agent": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _agent_focus(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    pane, workspace_id, tab_id = _resolve_agent(state, _required(params, "target"))
+    state.focused_workspace_id = workspace_id
+    workspace = state.require_workspace(workspace_id)
+    workspace.focused_tab_id = tab_id
+    state.require_tab(workspace_id, tab_id).focused_pane_id = pane.id
+    return {"type": "agent_focused", "agent": _pane_record(pane, workspace_id, tab_id)}
+
+
+def _agent_start(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("agent.start requires a server process manager")
+    name = _required(params, "name")
+    command = str(params.get("command") or name)
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    if tab_id:
+        tab = state.require_tab(workspace.id, str(tab_id))
+    else:
+        focused = workspace.focused_tab
+        if focused is None:
+            raise ValueError("workspace has no tab for the new agent")
+        tab = focused
+    pane = state.create_pane(workspace.id, tab.id, title=name)
+    if params.get("cwd"):
+        pane.cwd = str(params["cwd"])
+    started = processes.start(pane.id, command, pane.cwd)
+    detected = identify_agent_in_command(command)
+    pane.agent = detected.value if detected else name
+    pane.command = command
+    pane.status = AgentStatus.WORKING
+    record_workspace_id, record_tab_id = _pane_context(state, pane.id)
+    return {
+        "type": "agent_started",
+        "started": started,
+        "agent": _pane_record(pane, record_workspace_id, record_tab_id),
+    }
+
+
+def _panes_in_scope(state: AppState, scope: str) -> list[str]:
+    focused = state.focused_workspace
+    ids: list[str] = []
+    for workspace in state.workspaces:
+        if scope == "workspace" and (focused is None or workspace.id != focused.id):
+            continue
+        for tab in workspace.tabs:
+            if scope == "tab":
+                focused_tab = focused.focused_tab if focused else None
+                if focused_tab is None or tab.id != focused_tab.id:
+                    continue
+            ids.extend(pane.id for pane in tab.panes)
+    return ids
+
+
+def _tab_for_pane(state: AppState, pane_id: str) -> Tab | None:
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            if any(pane.id == pane_id for pane in tab.panes):
+                return tab
+    return None
+
+
+def _pane_broadcast(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("pane.broadcast requires a server process manager")
+    text = _required(params, "text")
+    if params.get("enter", True):
+        text = text + "\n"
+    scope = str(params.get("scope") or "all")
+    pane_ids = _panes_in_scope(state, scope)
+    sent = processes.broadcast(pane_ids, text)
+    return {"type": "pane_broadcast", "scope": scope, "targets": len(pane_ids), "sent": sent}
+
+
+def _tab_sync(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id)
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    if tab_id:
+        tab = state.require_tab(workspace.id, str(tab_id))
+    else:
+        focused = workspace.focused_tab
+        if focused is None:
+            raise ValueError("workspace has no tab to synchronize")
+        tab = focused
+    tab.synchronized = bool(params.get("enabled", True))
+    return {"type": "tab_sync", "tab_id": tab.id, "synchronized": tab.synchronized}
+
+
+def _schedule_record(schedule) -> dict[str, Any]:
+    return {
+        "id": schedule.id,
+        "cron": schedule.cron,
+        "pane_id": schedule.pane_id,
+        "command": schedule.command,
+        "enabled": schedule.enabled,
+    }
+
+
+def _schedule_add(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    cron = _required(params, "cron")
+    pane_id = _required(params, "pane_id")
+    command = _required(params, "command")
+    parse_cron(cron)  # validate; raises ValueError on a bad expression
+    schedule = state.add_schedule(cron, pane_id, command)
+    return {"type": "schedule_added", "schedule": _schedule_record(schedule)}
+
+
+def _schedule_list(state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    return {"type": "schedule_list", "schedules": [_schedule_record(item) for item in state.schedules]}
+
+
+def _schedule_remove(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    schedule_id = _required(params, "id")
+    return {"type": "schedule_removed", "id": schedule_id, "removed": state.remove_schedule(schedule_id)}
+
+
+def _schedule_run(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    if processes is None:
+        raise ValueError("schedule.run requires a server process manager")
+    schedule_id = _required(params, "id")
+    schedule = next((item for item in state.schedules if item.id == schedule_id), None)
+    if schedule is None:
+        raise KeyError(f"schedule not found: {schedule_id}")
+    processes.send_text(schedule.pane_id, schedule.command + ("\r" if schedule.send_enter else ""))
+    return {"type": "schedule_run", "id": schedule.id}
+
+
+def _workspace_record(workspace) -> dict[str, Any]:
+    return {
+        "workspace_id": workspace.id,
+        "label": workspace.label,
+        "cwd": workspace.cwd,
+        "status": workspace.status.value,
+        "focused_tab_id": workspace.focused_tab_id,
+    }
+
+
+def _tab_record(tab) -> dict[str, Any]:
+    return {
+        "tab_id": tab.id,
+        "label": tab.label,
+        "status": tab.status.value,
+        "focused_pane_id": tab.focused_pane_id,
+        "pane_count": len(tab.panes),
+    }
+
+
+def _pane_record(pane, workspace_id: str, tab_id: str) -> dict[str, Any]:
+    return {
+        "pane_id": pane.id,
+        "workspace_id": workspace_id,
+        "tab_id": tab_id,
+        "title": pane.title,
+        "cwd": pane.cwd,
+        "command": pane.command,
+        "agent": pane.agent,
+        "agent_status": pane.status.value,
+        "custom_status": pane.custom_status,
+        "output_lines": len(pane.output),
+    }
+
+
+def _pane_context(state: AppState, pane_id: str) -> tuple[str, str]:
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            for pane in tab.panes:
+                if pane.id == pane_id:
+                    return workspace.id, tab.id
+    raise KeyError(f"pane not found: {pane_id}")
+
+
+def _required(params: dict[str, Any], key: str) -> str:
+    value = params.get(key)
+    if value is None or value == "":
+        raise ValueError(f"missing required param: {key}")
+    return str(value)

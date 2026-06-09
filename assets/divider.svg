@@ -1,0 +1,5 @@
+<svg viewBox="0 0 1280 36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PyHerdr section divider">
+  <line x1="0" y1="18" x2="1216" y2="18" stroke="#2A3542" stroke-width="2"/>
+  <path d="M1224 4 H1262 L1244 32 H1224 Z" fill="#FFD43B"/>
+  <rect x="1188" y="8" width="22" height="22" rx="3" fill="#4B8BBE"/>
+</svg>

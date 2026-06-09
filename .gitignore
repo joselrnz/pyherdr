@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pyherdr/
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.vscode/
+.mypy_cache/
+
+# internal dev / porting docs + tooling — kept local, never published
+/CLAUDE.md
+/AGENTS.md
+/GUI_GAP_PLAN.md
+/PARITY.md
+/PORTING_LOG.md
+/PORTING_CHECKLIST.md
+/PORTING_INVENTORY.md
+/PORTING_STATUS.md
+/PORTING_TREE.md
+/SYMBOL_GAP.md
+/SYMBOL_INVENTORY.json
+/tools/
+/tests/test_porting_checklist.py
+/tests/test_porting_inventory.py
+/tests/test_porting_tree.py

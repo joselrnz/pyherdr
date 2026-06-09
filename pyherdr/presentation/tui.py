@@ -1,0 +1,2087 @@
+"""Live Textual multiplexer UI, modeled on Herdr.
+
+Two ways to drive it:
+
+* **Mouse** — click a tab to switch, click ``+`` for a new tab, click a pane to
+  focus it, and click a shell button in the sidebar (``+ wsl`` / ``+ pwsh`` /
+  ``+ bash`` / ``+ cmd``) to open a new terminal running that shell.
+* **Keyboard** (like Herdr/tmux) — keys go to the active pane; press the prefix
+  ``ctrl+b`` then an action key (``c`` new tab, ``v`` new pane, ``n``/``p``
+  next/prev tab, ``1``-``9`` switch tab, ``x`` close pane, ``z`` zoom, ``q``
+  quit). ``ctrl+t`` is avoided on purpose — host terminals intercept it.
+
+Layout: a clickable tab bar, a sidebar (workspaces + shell buttons + agents),
+the focused tab's panes side-by-side, a hint line, and a status bar. Theme comes
+from config (Catppuccin Mocha by default).
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from collections.abc import Callable
+from typing import Any
+
+from rich.text import Text
+from textual import events
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.widget import Widget
+from textual.widgets import Input, Static
+
+from ..config import load_config
+from ..config.theme import BUILTIN_THEMES, THEME_NAMES, Palette
+from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
+from .client import PaneClient, ServerClient
+
+_STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
+_STATUS_PRIORITY = ["blocked", "working", "done", "idle", "unknown"]
+# Braille spinner frames for the "working" agent state (herdr src/ui.rs).
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Quick accent colours offered in the theme picker.
+_ACCENT_SWATCHES = ["#89b4fa", "#f5c2e7", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af", "#94e2d5", "#9399b2"]
+# Prefix action key -> internal action name (defaults; config can remap).
+_DEFAULT_PREFIX_ACTIONS = {
+    "c": "new_tab",
+    "v": "split_sbs",
+    "-": "split_stack",
+    "n": "next_tab",
+    "p": "prev_tab",
+    "<": "move_tab_left",
+    ">": "move_tab_right",
+    "{": "move_workspace_up",
+    "}": "move_workspace_down",
+    "x": "close_pane",
+    "X": "close_tab",
+    "T": "rename_tab",
+    "N": "new_workspace",
+    "w": "next_workspace",
+    "g": "goto",
+    ":": "palette",
+    "m": "pane_menu",
+    "s": "settings",
+    "z": "zoom",
+    "r": "resize",
+    "d": "detach",
+    "?": "help",
+    "q": "quit",
+    "tab": "next_pane",
+    "h": "focus_left",
+    "j": "focus_down",
+    "k": "focus_up",
+    "l": "focus_right",
+    "left": "focus_left",
+    "down": "focus_down",
+    "up": "focus_up",
+    "right": "focus_right",
+}
+# Clickable buttons shown in the bottom action bar: (label, action). Each posts
+# the action through the same dispatch path as the prefix keybinds / menus.
+_FOOTER_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("? help", "help"),
+    ("❯ palette", "palette"),
+    ("＋ tab", "new_tab"),
+    ("◫ split", "new_pane"),
+    ("▾ terminal", "open_shell_picker"),
+    ("▤ stats", "resource_monitor"),
+    ("◐ theme", "settings"),
+    ("↧ detach", "detach"),
+    ("✕ quit", "quit"),
+)
+
+
+def _default_shell() -> str:
+    """The shell launched in panes. Override with the ``PYHERDR_SHELL`` env var.
+
+    On Windows we prefer WSL (a real Linux shell, so ``ls -ltr`` / ``grep`` work)
+    and fall back to ``cmd.exe`` if WSL is not installed.
+    """
+    override = os.environ.get("PYHERDR_SHELL")
+    if override:
+        return override
+    configured = ""
+    mode = "auto"
+    try:
+        terminal = load_config().terminal
+        configured = terminal.default_shell.strip()
+        mode = str(terminal.shell_mode)
+    except Exception:
+        pass
+    if configured:
+        shell = configured
+    elif os.name == "nt":
+        shell = shutil.which("wsl.exe") or os.environ.get("COMSPEC", "cmd.exe")
+    else:
+        shell = os.environ.get("SHELL", "/bin/bash")
+    # shell_mode: add a login flag for POSIX login shells (no-op for cmd/pwsh/wsl).
+    if mode == "login" and os.path.basename(shell.split()[0] if shell else "").lower() in ("bash", "zsh", "sh", "fish"):
+        return f"{shell} -l"
+    return shell
+
+
+def _available_shells() -> list[tuple[str, str]]:
+    """``(label, command)`` for the shells installed on this machine."""
+    shells: list[tuple[str, str]] = []
+    if os.name == "nt":
+        # NOTE: Git Bash (MSYS2 bash.exe) is intentionally excluded — it is built
+        # for mintty and does not run cleanly under ConPTY (it fails to spawn /
+        # produces no output). WSL provides a full bash instead. Override with
+        # PYHERDR_SHELL if you really want to point at something else.
+        candidates = (
+            ("wsl", "wsl.exe"),
+            ("pwsh", "pwsh.exe"),
+            ("powershell", "powershell.exe"),
+        )
+        for label, exe in candidates:
+            found = shutil.which(exe)
+            if found:
+                shells.append((label, found))
+        shells.append(("cmd", os.environ.get("COMSPEC", "cmd.exe")))
+    else:
+        shells.append(("bash", os.environ.get("SHELL", "/bin/bash")))
+        for label, exe in (("zsh", "zsh"), ("fish", "fish")):
+            found = shutil.which(exe)
+            if found:
+                shells.append((label, found))
+    return shells
+
+
+def _rollup(statuses: list[str]) -> str:
+    for status in _STATUS_PRIORITY:
+        if status in statuses:
+            return status
+    return "unknown"
+
+
+def _git_branch(cwd: str) -> str:
+    """Best-effort current git branch for a workspace cwd (empty if none)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_ahead_behind(cwd: str) -> tuple[int, int]:
+    """Return ``(ahead, behind)`` commit counts vs the upstream, or ``(0, 0)``."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "--left-right", "@{u}...HEAD"],
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (0, 0)
+    if result.returncode != 0:
+        return (0, 0)
+    parts = result.stdout.split()
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        return (int(parts[1]), int(parts[0]))  # right=HEAD (ahead), left=upstream (behind)
+    return (0, 0)
+
+
+class Activated(Message):
+    """Posted when a clickable element (tab, button, pane) is clicked."""
+
+    def __init__(self, action: str, arg: str | None = None) -> None:
+        self.action = action
+        self.arg = arg
+        super().__init__()
+
+
+class Clickable(Static):
+    """A Static that posts an :class:`Activated` message when clicked."""
+
+    def __init__(
+        self,
+        renderable: Any = "",
+        action: str = "",
+        arg: str | None = None,
+        *,
+        dbl_action: str | None = None,
+        ctx_action: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(renderable, id=id, classes=classes)
+        self._action = action
+        self._arg = arg
+        self._dbl_action = dbl_action
+        self._ctx_action = ctx_action
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        if self._ctx_action and getattr(event, "button", 1) == 3:
+            self.post_message(Activated(self._ctx_action, self._arg))
+        elif self._dbl_action and getattr(event, "chain", 1) >= 2:
+            self.post_message(Activated(self._dbl_action, self._arg))
+        else:
+            self.post_message(Activated(self._action, self._arg))
+
+
+def _help_text(palette: Palette) -> Text:
+    """The grouped keybind cheat-sheet shown in the help overlay."""
+    text = Text()
+    text.append("press ctrl+b, then a key:\n", style=palette.subtext0)
+
+    def group(title: str) -> None:
+        text.append(f"\n{title}\n", style=f"bold {palette.accent}")
+
+    def row(key: str, desc: str) -> None:
+        text.append(f"  {key:<12}", style=palette.mauve)
+        text.append(f"{desc}\n", style=palette.text)
+
+    group("panes")
+    row("v / -", "split right / down")
+    row("h/j/k/l", "focus left/down/up/right")
+    row("r", "resize mode (then h/l/j/k, esc)")
+    row("z", "zoom pane")
+    row("m", "pane menu (split/zoom/scroll/close)")
+    row("x", "close pane")
+    row("pgup/pgdn", "scroll the pane")
+    group("tabs")
+    row("c", "new tab")
+    row("n / p", "next / prev tab")
+    row("1-9", "switch to tab N")
+    row("< / >", "move tab left / right")
+    row("T", "rename tab (or double-click)")
+    row("X", "close tab (or click ✕)")
+    group("workspaces")
+    row("N", "new workspace (folder picker)")
+    row("w", "next workspace")
+    row("{ / }", "move workspace up / down")
+    group("global")
+    row(":", "command palette (run anything)")
+    row("g", "jump to pane")
+    row("s", "theme / settings")
+    row("d", "detach (panes keep running)")
+    row("?", "this help")
+    row("q", "quit")
+    text.append(
+        "\nmouse: click tabs/panes · drag to resize · right-click → menus + resource usage\n",
+        style=palette.subtext0,
+    )
+    return text
+
+
+class HelpScreen(ModalScreen[None]):
+    """A dismissable keybind cheat-sheet overlay (ctrl+b ?)."""
+
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; background: $ph-base 70%; }
+    #help-box {
+        width: 60;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        color: $ph-text;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 2;
+    }
+    #help-foot { color: $ph-subtext0; padding: 1 2 0 2; }
+    """
+
+    def __init__(self, palette: Palette) -> None:
+        super().__init__()
+        self._palette = palette
+
+    def compose(self) -> ComposeResult:
+        box = Static(_help_text(self._palette), id="help-box")
+        box.border_title = "keybinds"
+        yield box
+        yield Static("esc / enter / ? to close", id="help-foot")
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "enter", "question_mark", "q"):
+            self.dismiss()
+        event.stop()
+
+    def on_click(self, event: events.Click) -> None:
+        self.dismiss()
+        event.stop()
+
+
+def _fmt_mb(num_bytes: int) -> str:
+    """Render a byte count as megabytes (task-manager style)."""
+    return f"{num_bytes / 1048576:.1f} MB"
+
+
+class StatsScreen(ModalScreen[None]):
+    """A live CPU/RAM monitor for one pane, a workspace, or every session.
+
+    Refreshes from the server's cached snapshot (~1.5s), so it behaves like a
+    small task-manager: per-process CPU% + RSS, biggest first, with a total.
+    """
+
+    DEFAULT_CSS = """
+    StatsScreen { align: center middle; background: $ph-base 70%; }
+    #stats-box {
+        width: 92;
+        max-width: 96%;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        color: $ph-text;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 2;
+    }
+    #stats-scroll { height: auto; max-height: 80%; }
+    #stats-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        client: PaneClient,
+        palette: Palette,
+        labels: dict[str, str],
+        pane_ids: list[str] | None,
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._client = client
+        self._palette = palette
+        self._labels = labels
+        self._pane_ids = pane_ids  # None = every session
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="stats-box"):
+            yield VerticalScroll(Static("", id="stats-body"), id="stats-scroll")
+            yield Static("esc to close · sorted by CPU · updates live", id="stats-foot")
+
+    def on_mount(self) -> None:
+        self.query_one("#stats-box", Vertical).border_title = self._title
+        self._refresh()
+        self.set_interval(1.5, self._refresh)
+
+    def _refresh(self) -> None:
+        try:
+            payload = self._client.stats()
+        except Exception:
+            payload = {"available": False, "stats": {}}
+        self.query_one("#stats-body", Static).update(self._render_stats(payload))
+
+    def _render_stats(self, payload: dict[str, Any]) -> Text:
+        palette = self._palette
+        text = Text()
+        if not payload.get("available", False):
+            text.append("psutil is not installed.\n\n", style=f"bold {palette.red}")
+            text.append("Install it to see CPU/RAM per session:\n", style=palette.text)
+            text.append("    pip install psutil\n", style=palette.subtext0)
+            return text
+        stats = payload.get("stats", {}) or {}
+        ids = self._pane_ids if self._pane_ids is not None else list(stats.keys())
+        entries = [(pid, stats[pid]) for pid in ids if pid in stats]
+        if not entries:
+            text.append("No running processes to report yet.\n", style=palette.subtext0)
+            text.append("(panes may still be starting — this refreshes live)\n", style=palette.overlay0)
+            return text
+        entries.sort(key=lambda kv: kv[1].get("cpu_percent", 0.0), reverse=True)
+        total_cpu = sum(s.get("cpu_percent", 0.0) for _, s in entries)
+        total_rss = sum(int(s.get("rss_bytes", 0)) for _, s in entries)
+        total_procs = sum(int(s.get("num_procs", 0)) for _, s in entries)
+        text.append("TOTAL  ", style=f"bold {palette.accent}")
+        text.append(f"CPU {total_cpu:.1f}%", style=palette.green)
+        text.append(f"   RAM {_fmt_mb(total_rss)}", style=palette.blue)
+        text.append(f"   {len(entries)} session(s) · {total_procs} processes\n", style=palette.subtext0)
+        for pane_id, stat in entries:
+            label = self._labels.get(pane_id, pane_id)
+            text.append("\n● ", style=palette.accent)
+            text.append(str(label), style=f"bold {palette.text}")
+            text.append(f"   CPU {stat.get('cpu_percent', 0.0):.1f}%", style=palette.green)
+            text.append(f"   RAM {_fmt_mb(int(stat.get('rss_bytes', 0)))}", style=palette.blue)
+            text.append(f"   (pid {stat.get('pid', '?')})\n", style=palette.overlay0)
+            procs = stat.get("procs", []) or []
+            for proc in procs[:8]:
+                text.append(f"    {float(proc.get('cpu_percent', 0.0)):>5.1f}%  ", style=palette.green)
+                text.append(f"{_fmt_mb(int(proc.get('rss_bytes', 0))):>10}  ", style=palette.blue)
+                text.append(f"{proc.get('cmd') or proc.get('name', '?')}\n", style=palette.subtext0)
+            if len(procs) > 8:
+                text.append(f"    … {len(procs) - 8} more\n", style=palette.overlay0)
+        text.append("\nCPU% can exceed 100% across cores (top-style).", style=palette.overlay0)
+        return text
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "enter", "q"):
+            self.dismiss()
+        event.stop()
+
+
+class ThemeScreen(ModalScreen[None]):
+    """A theme picker with swatch previews + accent colours; previews live."""
+
+    DEFAULT_CSS = """
+    ThemeScreen { align: center middle; background: $ph-base 70%; }
+    #theme-box {
+        width: 46;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    .theme-hdr { width: 1fr; color: $ph-subtext0; padding: 1 0 0 0; }
+    #theme-list { height: auto; max-height: 13; }
+    .theme-row { width: 1fr; padding: 0 1; }
+    .theme-row:hover { background: $ph-surface0; }
+    #accent-row { height: 1; }
+    .accent-sw { width: auto; padding: 0 1; }
+    .accent-sw:hover { background: $ph-surface0; }
+    #theme-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, names: list[str], current: str) -> None:
+        super().__init__()
+        self._names = names
+        self._current = (current or "").strip().lower()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="theme-box"):
+            yield Static("theme", classes="theme-hdr")
+            yield VerticalScroll(id="theme-list")
+            yield Static("accent", classes="theme-hdr")
+            with Horizontal(id="accent-row"):
+                for hex_color in _ACCENT_SWATCHES:
+                    swatch = Text("●", style=hex_color)
+                    swatch_id = f"accent-{hex_color.lstrip('#')}"
+                    yield Clickable(swatch, "pick_accent", hex_color, id=swatch_id, classes="accent-sw")
+            yield Static("click to preview · esc to close", id="theme-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#theme-box", Vertical).border_title = "theme"
+        await self._rebuild_rows()
+
+    async def _rebuild_rows(self) -> None:
+        listing = self.query_one("#theme-list", VerticalScroll)
+        await listing.remove_children()
+        rows = [
+            Clickable(self._row_text(name), "pick_theme", name, id=f"theme-{name}", classes="theme-row")
+            for name in self._names
+        ]
+        await listing.mount(*rows)
+
+    def _row_text(self, name: str) -> Text:
+        text = Text()
+        text.append("✓ " if name == self._current else "  ", style="#a6e3a1")
+        palette = BUILTIN_THEMES.get(name)
+        if palette is not None:
+            for token in (palette.accent, palette.green, palette.yellow, palette.red, palette.blue):
+                if token.startswith("#"):
+                    text.append("●", style=token)
+            text.append(" ")
+        text.append(name)
+        return text
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "pick_theme" and message.arg:
+            apply = getattr(self.app, "apply_theme", None)
+            if callable(apply):
+                apply(message.arg)
+            self._current = message.arg.strip().lower()
+            self.run_worker(self._rebuild_rows())
+        elif message.action == "pick_accent" and message.arg:
+            apply = getattr(self.app, "apply_accent", None)
+            if callable(apply):
+                apply(message.arg)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.dismiss()
+        event.stop()
+
+
+class RenameScreen(ModalScreen[None]):
+    """A modal text-input dialog (rename a tab/pane/workspace)."""
+
+    DEFAULT_CSS = """
+    RenameScreen { align: center middle; background: $ph-base 70%; }
+    #rename-box {
+        width: 56;
+        height: auto;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 2;
+    }
+    #rename-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, title: str, current: str, submit: Callable[[str], None]) -> None:
+        super().__init__()
+        self._title = title
+        self._current = current
+        self._submit = submit
+
+    def compose(self) -> ComposeResult:
+        box = Vertical(
+            Input(value=self._current, id="rename-input"),
+            Static("enter save · esc cancel", id="rename-foot"),
+            id="rename-box",
+        )
+        box.border_title = self._title
+        yield box
+
+    def on_mount(self) -> None:
+        self.query_one("#rename-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        value = event.value.strip()
+        if value:
+            self._submit(value)
+        self.dismiss()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class NavigatorScreen(ModalScreen[None]):
+    """Jump-to-any-pane list (ctrl+b g). Click a row to switch to that pane."""
+
+    DEFAULT_CSS = """
+    NavigatorScreen { align: center middle; background: $ph-base 70%; }
+    #nav-box {
+        width: 60;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #nav-list { height: auto; max-height: 18; }
+    .nav-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .nav-row:hover { background: $ph-surface0; }
+    #nav-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, rows: list[tuple[str, Text, str]]) -> None:
+        super().__init__()
+        self._rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="nav-box"):
+            yield Input(placeholder="filter panes", id="nav-search")
+            yield VerticalScroll(id="nav-list")
+            yield Static("type to filter · enter/click jump · esc close", id="nav-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#nav-box", Vertical).border_title = "navigator"
+        self.query_one("#nav-search", Input).focus()
+        await self._populate("")
+
+    async def _populate(self, query: str) -> None:
+        listing = self.query_one("#nav-list", VerticalScroll)
+        await listing.remove_children()
+        needle = query.strip().lower()
+        items = [
+            Clickable(text, "nav_jump", arg, id=f"nav-{index}", classes="nav-row")
+            for index, (arg, text, plain) in enumerate(self._rows)
+            if needle in plain.lower()
+        ]
+        if items:
+            await listing.mount(*items)
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        await self._populate(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        needle = event.value.strip().lower()
+        for arg, _text, plain in self._rows:
+            if needle in plain.lower():
+                self._jump(arg)
+                return
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "nav_jump" and message.arg:
+            self._jump(message.arg)
+
+    def _jump(self, arg: str) -> None:
+        jump = getattr(self.app, "jump_to", None)
+        if callable(jump):
+            jump(arg)
+        self.dismiss()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class CommandPaletteScreen(ModalScreen[None]):
+    """Fuzzy launcher for every action + custom command (ctrl+b p)."""
+
+    DEFAULT_CSS = """
+    CommandPaletteScreen { align: center middle; background: $ph-base 70%; }
+    #cmd-box {
+        width: 58;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #cmd-list { height: auto; max-height: 16; }
+    .cmd-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .cmd-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    #cmd-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, entries: list[tuple[str, str, bool]]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="cmd-box"):
+            yield Input(placeholder="type a command…", id="cmd-search")
+            yield VerticalScroll(id="cmd-list")
+            yield Static("type to filter · enter/click run · esc close", id="cmd-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#cmd-box", Vertical).border_title = "command palette"
+        self.query_one("#cmd-search", Input).focus()
+        await self._populate("")
+
+    async def _populate(self, query: str) -> None:
+        listing = self.query_one("#cmd-list", VerticalScroll)
+        await listing.remove_children()
+        needle = query.strip().lower()
+        rows = [
+            Clickable(label, "palette_pick", str(index), id=f"cmd-{index}", classes="cmd-row")
+            for index, (label, _value, _is_command) in enumerate(self._entries)
+            if needle in label.lower()
+        ]
+        if rows:
+            await listing.mount(*rows)
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        await self._populate(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        needle = event.value.strip().lower()
+        for index, (label, _value, _is_command) in enumerate(self._entries):
+            if needle in label.lower():
+                self._run(index)
+                return
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "palette_pick" and message.arg is not None:
+            self._run(int(message.arg))
+
+    def _run(self, index: int) -> None:
+        if not 0 <= index < len(self._entries):
+            self.dismiss()
+            return
+        _label, value, is_command = self._entries[index]
+        runner = getattr(self.app, "run_palette_entry", None)
+        self.dismiss()
+        if callable(runner):
+            self.app.call_after_refresh(runner, value, is_command)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class ContextMenuScreen(ModalScreen[None]):
+    """A small right-click action menu; clicking an item runs that action."""
+
+    DEFAULT_CSS = """
+    ContextMenuScreen { align: center middle; background: $ph-base 50%; }
+    #ctx-box {
+        width: auto;
+        min-width: 22;
+        height: auto;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 0 1;
+    }
+    .ctx-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .ctx-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    """
+
+    def __init__(self, title: str, items: list[tuple[str, str, str | None]]) -> None:
+        super().__init__()
+        self._title = title
+        self._items = items
+
+    def compose(self) -> ComposeResult:
+        rows = [
+            Clickable(label, action, arg, id=f"ctx-{index}", classes="ctx-row")
+            for index, (label, action, arg) in enumerate(self._items)
+        ]
+        box = Vertical(*rows, id="ctx-box")
+        box.border_title = self._title
+        yield box
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        action, arg = message.action, message.arg
+        handler = getattr(self.app, "run_menu_action", None)
+        self.dismiss()
+        if callable(handler):
+            self.app.call_after_refresh(handler, action, arg)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class ShellPickerScreen(ModalScreen[None]):
+    """A dropdown to pick which shell a new terminal/tab runs (ctrl+b n-area)."""
+
+    DEFAULT_CSS = """
+    ShellPickerScreen { align: center middle; background: $ph-base 60%; }
+    #shell-box {
+        width: auto;
+        min-width: 26;
+        height: auto;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 0 1;
+    }
+    .shell-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .shell-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    #shell-foot { color: $ph-subtext0; padding: 1 1 0 1; }
+    """
+
+    def __init__(self, shells: list[tuple[str, str]]) -> None:
+        super().__init__()
+        self._shells = shells
+
+    def compose(self) -> ComposeResult:
+        rows = [
+            Clickable(f"  {label}", "new_shell", command, id=f"shellpick-{label}", classes="shell-row")
+            for label, command in self._shells
+        ]
+        box = Vertical(*rows, id="shell-box")
+        box.border_title = "new terminal"
+        yield box
+        yield Static("click a shell · esc close", id="shell-foot")
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "new_shell" and message.arg:
+            handler = getattr(self.app, "run_menu_action", None)
+            self.dismiss()
+            if callable(handler):
+                self.app.call_after_refresh(handler, "new_shell", message.arg)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class DirPickerScreen(ModalScreen[None]):
+    """A folder browser: click into directories, then 'open this folder'."""
+
+    DEFAULT_CSS = """
+    DirPickerScreen { align: center middle; background: $ph-base 70%; }
+    #dir-box {
+        width: 72;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #dir-path { color: $ph-subtext0; padding: 0 0 1 0; }
+    #dir-list { height: auto; max-height: 16; }
+    .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .dir-row:hover { background: $ph-surface0; }
+    .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
+    .dir-open:hover { background: $ph-accent; color: $ph-base; }
+    #dir-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, start: str, on_select: Callable[[str], None]) -> None:
+        super().__init__()
+        self._cwd = os.path.abspath(start or os.getcwd())
+        self._on_select = on_select
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dir-box"):
+            yield Input(placeholder="…or type/paste a path and press enter", id="dir-jump")
+            yield Static("", id="dir-path")
+            yield VerticalScroll(id="dir-list")
+            yield Static("click a folder to enter  ·  ✓ open this folder  ·  esc cancel", id="dir-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#dir-box", Vertical).border_title = "choose workspace folder"
+        await self._populate()
+
+    async def _populate(self) -> None:
+        self.query_one("#dir-path", Static).update(self._cwd.replace("\\", "/"))
+        listing = self.query_one("#dir-list", VerticalScroll)
+        await listing.remove_children()
+        rows: list[Static] = [Clickable("✓ open this folder", "dir_open", classes="dir-open", id="dir-open")]
+        parent = os.path.dirname(self._cwd)
+        if parent and parent != self._cwd:
+            rows.append(Clickable("  ..", "dir_up", classes="dir-row", id="dir-up"))
+        for index, name in enumerate(self._subdirs()):
+            full = os.path.join(self._cwd, name)
+            rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
+        await listing.mount(*rows)
+
+    def _subdirs(self) -> list[str]:
+        try:
+            names = [entry.name for entry in os.scandir(self._cwd) if entry.is_dir() and not entry.name.startswith(".")]
+        except OSError:
+            names = []
+        return sorted(names, key=str.lower)
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "dir_open":
+            self._on_select(self._cwd)
+            self.dismiss()
+        elif message.action == "dir_up":
+            self._cwd = os.path.dirname(self._cwd)
+            self.run_worker(self._populate())
+        elif message.action == "dir_enter" and message.arg:
+            self._cwd = message.arg
+            self.run_worker(self._populate())
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        path = os.path.expanduser(event.value.strip())
+        if os.path.isdir(path):
+            self._cwd = os.path.abspath(path)
+            self.run_worker(self._populate())
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class PaneView(Static):
+    """A bordered, titled view of one pane's screen. Click it to focus."""
+
+    can_focus = False
+
+    def __init__(self, pane_id: str, title: str) -> None:
+        super().__init__("", id=f"pane-{pane_id}")
+        self.pane_id = pane_id
+        self.border_title = title
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        if getattr(event, "button", 1) == 3:
+            self.post_message(Activated("ctx_pane", self.pane_id))
+        else:
+            self.post_message(Activated("focus_pane", self.pane_id))
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.post_message(Activated("pane_scroll_up", self.pane_id))
+        event.stop()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self.post_message(Activated("pane_scroll_down", self.pane_id))
+        event.stop()
+
+
+class SplitDivider(Static):
+    """A draggable divider between two split panes (drag to resize)."""
+
+    DEFAULT_CSS = """
+    SplitDivider { background: $ph-overlay0; }
+    SplitDivider.divider-h { width: 1; height: 1fr; }
+    SplitDivider.divider-v { width: 1fr; height: 1; }
+    SplitDivider:hover { background: $ph-accent; }
+    """
+
+    def __init__(self, direction: Direction, path: tuple[bool, ...]) -> None:
+        cls = "divider-h" if direction == Direction.HORIZONTAL else "divider-v"
+        super().__init__("", classes=cls)
+        self._direction = direction
+        self._path = path
+        self._dragging = False
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        self._dragging = True
+        self.capture_mouse()
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._dragging:
+            self._dragging = False
+            self.release_mouse()
+            persist = getattr(self.app, "persist_layout", None)
+            if callable(persist):
+                persist()
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if not self._dragging or self.parent is None:
+            return
+        region = getattr(self.parent, "region", None)
+        if region is None:
+            return
+        if self._direction == Direction.HORIZONTAL:
+            ratio = (event.screen_x - region.x) / max(1, region.width)
+        else:
+            ratio = (event.screen_y - region.y) / max(1, region.height)
+        ratio = max(0.1, min(0.9, ratio))
+        siblings = list(self.parent.children)
+        index = siblings.index(self) if self in siblings else -1
+        if index <= 0 or index + 1 >= len(siblings):
+            return
+        first, second = siblings[index - 1], siblings[index + 1]
+        pct = max(1, min(99, round(ratio * 100)))
+        if self._direction == Direction.HORIZONTAL:
+            first.styles.width = f"{pct}fr"
+            second.styles.width = f"{100 - pct}fr"
+        else:
+            first.styles.height = f"{pct}fr"
+            second.styles.height = f"{100 - pct}fr"
+        remember = getattr(self.app, "_remember_ratio", None)
+        if callable(remember):
+            remember(self._path, ratio)
+        event.stop()
+
+
+class PyHerdrTui(App):
+    """A Herdr-style terminal multiplexer over the PyHerdr server."""
+
+    def __init__(self, client: PaneClient | None = None, *, poll_interval: float = 0.1) -> None:
+        # Set the palette before super().__init__(): App.__init__ parses CSS and
+        # calls get_css_variables(), which reads self._palette.
+        config = load_config()
+        self._palette: Palette = config.theme.resolve()
+        self._theme_name = (config.theme.name or "catppuccin").strip()
+        # Keybindings: custom prefix, action→key overrides, and user commands.
+        self._prefix_key = (config.keys.prefix or "ctrl+b").strip()
+        self._prefix_actions = dict(_DEFAULT_PREFIX_ACTIONS)
+        for action, key in config.keys.bindings.items():
+            key = key.removeprefix("prefix+").strip()
+            if not key:
+                continue
+            for existing in [k for k, a in self._prefix_actions.items() if a == action]:
+                del self._prefix_actions[existing]
+            self._prefix_actions[key] = action
+        self._commands = {
+            binding.key.removeprefix("prefix+").strip(): binding.command
+            for binding in config.keys.commands
+            if binding.key and binding.command
+        }
+        super().__init__()
+        self._client: PaneClient = client or ServerClient()
+        self._poll_interval = poll_interval
+        self._shells = _available_shells()
+        self._state: dict = {"workspaces": []}
+        self._branches: dict[str, str] = {}
+        self._ahead_behind: dict[str, tuple[int, int]] = {}
+        self._pending_layout: dict | None = None
+        self._agent_status: dict[str, str] = {}
+        self._workspace_id: str | None = None
+        self._tab_id: str | None = None
+        self._pane_id: str | None = None
+        self._prefix = False
+        self._zoom = False
+        self._resize = False
+        self._spin = 0
+        self._seeding = False
+
+    CSS = """
+    Screen { background: $ph-base; color: $ph-text; }
+    #tabbar {
+        dock: top;
+        height: 1;
+        background: $ph-mantle;
+        color: $ph-subtext0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-size: 0 0;
+    }
+    .wsname { width: auto; padding: 0 1; color: $ph-accent; text-style: bold; }
+    .tabcell { width: auto; padding: 0 1; color: $ph-subtext0; }
+    .tabcell:hover { background: $ph-surface0; color: $ph-text; }
+    .tabcell.active { background: $ph-accent; color: $ph-base; text-style: bold; }
+    .tabclose { width: auto; color: $ph-overlay0; }
+    .tabclose:hover { background: $ph-surface0; color: $ph-red; text-style: bold; }
+    .tabplus { width: auto; padding: 0 1; color: $ph-overlay0; text-style: bold; }
+    .tabplus:hover { background: $ph-surface0; color: $ph-text; }
+    #body { height: 1fr; }
+    #nav {
+        width: 26;
+        height: 1fr;
+        background: $ph-mantle;
+        border: round $ph-overlay0;
+        border-title-color: $ph-accent;
+        padding: 0 1;
+    }
+    .wsrow { width: 1fr; height: auto; }
+    .wsrow:hover { background: $ph-surface0; }
+    .navhdr { width: 1fr; color: $ph-subtext0; padding: 1 0 0 0; }
+    .navtop { width: 1fr; color: $ph-subtext0; }
+    .navgap { width: 1fr; height: 1; }
+    .newterm { width: 1fr; color: $ph-blue; }
+    .newterm:hover { background: $ph-surface0; text-style: bold; }
+    .agents { width: 1fr; padding: 1 0 0 0; }
+    #panes { height: 1fr; width: 1fr; }
+    PaneView {
+        width: 1fr;
+        height: 1fr;
+        border: round $ph-overlay0;
+        border-title-color: $ph-blue;
+        padding: 0 1;
+        background: $ph-base;
+    }
+    PaneView.active { border: round $ph-accent; border-title-color: $ph-accent; }
+    #footer { dock: bottom; height: 2; }
+    #actionbar {
+        height: 1;
+        background: $ph-surface0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-size: 0 0;
+    }
+    .abtn { width: auto; padding: 0 1; color: $ph-subtext0; }
+    .abtn:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    #statusbar { height: 1; background: $ph-mantle; color: $ph-subtext0; padding: 0 1; }
+    """
+
+    def get_css_variables(self) -> dict[str, str]:
+        variables = super().get_css_variables()
+        palette = self._palette
+        variables.update(
+            {
+                "ph-base": palette.panel_bg,
+                "ph-mantle": palette.surface_dim,
+                "ph-surface0": palette.surface0,
+                "ph-overlay0": palette.overlay0,
+                "ph-text": palette.text,
+                "ph-subtext0": palette.subtext0,
+                "ph-accent": palette.accent,
+                "ph-blue": palette.blue,
+                "ph-red": palette.red,
+                "ph-green": palette.green,
+            }
+        )
+        return variables
+
+    def compose(self) -> ComposeResult:
+        yield HorizontalScroll(id="tabbar")
+        with Horizontal(id="body"):
+            yield Vertical(id="nav")
+            yield Horizontal(id="panes")
+        with Vertical(id="footer"):
+            with HorizontalScroll(id="actionbar"):
+                for label, action in _FOOTER_ACTIONS:
+                    yield Clickable(label, action, classes="abtn")
+            yield Static("", id="statusbar")
+
+    async def on_mount(self) -> None:
+        self.title = "PyHerdr"
+        await self.reload()
+        self.set_interval(self._poll_interval, self._tick)
+
+    # ----- input: prefix model -----
+    def on_key(self, event: events.Key) -> None:
+        # When a modal screen (help/theme/rename/navigator/menu) is open it owns
+        # the keyboard — don't let the main pane key handler intercept its keys.
+        if len(self.screen_stack) > 1:
+            return
+        # All server I/O is wrapped so a dropped connection or server hiccup can
+        # never crash the UI (e.g. forwarding ctrl+c to a pane).
+        try:
+            if self._resize:
+                self._handle_resize_key(event.key)
+            elif self._prefix:
+                self._prefix = False
+                self._run_prefix_action(event.key, event.character)
+                self._refresh_hint()
+            elif event.key == self._prefix_key:
+                self._prefix = True
+                self._refresh_hint()
+            elif self._pane_id and event.key in ("pageup", "pagedown"):
+                self._scroll_pane(self._pane_id, "up" if event.key == "pageup" else "down")
+            elif self._pane_id:
+                char = event.character
+                if char is not None and char.isprintable():
+                    self._client.send_text(self._pane_id, char)
+                else:
+                    self._client.send_key(self._pane_id, event.key)
+        except Exception:
+            self._prefix = False
+        event.stop()
+        event.prevent_default()
+
+    def _run_prefix_action(self, key: str, character: str | None) -> None:
+        command = self._commands.get(character or "") or self._commands.get(key)
+        if command:
+            self.run_worker(self._new_tab_with_shell(command), exclusive=True)
+            return
+        if character and character.isdigit() and character != "0":
+            self._switch_tab(int(character) - 1)
+            return
+        action = self._prefix_actions.get(character or "") or self._prefix_actions.get(key)
+        if action:
+            self._run_named_action(action)
+
+    def _run_named_action(self, action: str) -> None:
+        if action == "new_tab":
+            self._client.create_tab()
+            self.run_worker(self._reload_focus_last_tab(), exclusive=True)
+        elif action == "split_sbs":
+            self.run_worker(self._split("horizontal"), exclusive=True)
+        elif action == "split_stack":
+            self.run_worker(self._split("vertical"), exclusive=True)
+        elif action == "new_workspace":
+            self._open_new_workspace()
+        elif action == "close_pane" and self._pane_id:
+            self._client.close_pane(self._pane_id)
+            self._pane_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "close_tab" and self._tab_id:
+            self._client.close_tab(self._tab_id)
+            self._tab_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "rename_tab":
+            self._open_rename_tab(self._tab_id)
+        elif action in ("move_tab_left", "move_tab_right") and self._tab_id:
+            self._client.move_tab(self._tab_id, "left" if action == "move_tab_left" else "right")
+            self.run_worker(self.reload(), exclusive=True)
+        elif action in ("move_workspace_up", "move_workspace_down") and self._workspace_id:
+            self._client.move_workspace(self._workspace_id, "up" if action == "move_workspace_up" else "down")
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "settings":
+            self.push_screen(ThemeScreen(THEME_NAMES, self._theme_name))
+        elif action == "goto":
+            rows = self._navigator_rows()
+            if rows:
+                self.push_screen(NavigatorScreen(rows))
+        elif action == "next_tab":
+            self._cycle_tab(1)
+        elif action == "prev_tab":
+            self._cycle_tab(-1)
+        elif action == "next_pane":
+            self._cycle_pane(1)
+        elif action == "prev_pane":
+            self._cycle_pane(-1)
+        elif action in ("focus_left", "focus_down", "focus_up", "focus_right"):
+            self._focus_direction(action)
+        elif action == "next_workspace":
+            self._cycle_workspace(1)
+        elif action == "zoom":
+            self._zoom = not self._zoom
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "resize":
+            self._resize = True
+            self._refresh_hint()
+        elif action == "help":
+            self.push_screen(HelpScreen(self._palette))
+        elif action == "palette":
+            self._open_command_palette()
+        elif action == "pane_menu":
+            self._open_pane_menu()
+        elif action == "copy_output":
+            self._copy_pane_output(self._pane_id)
+        elif action == "resource_monitor":
+            self._open_stats("resource monitor · all sessions", None)
+        elif action in ("quit", "detach"):
+            # Detach == leave the TUI; the background server keeps every pane
+            # running, so reopening `pyherdr tui` re-attaches to them.
+            self.exit()
+
+    # ----- input: mouse -----
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        try:
+            self._dispatch_activated(message.action, message.arg)
+        except Exception:
+            pass
+
+    def _dispatch_activated(self, action: str, arg: str | None) -> None:
+        if action == "focus_pane" and arg:
+            self._pane_id = arg
+            self._mark_active_pane()
+            self._refresh_statusbar()
+        elif action == "switch_tab" and arg:
+            self._focus_tab_on_server(arg)
+            self._tab_id = arg
+            self._pane_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "switch_workspace" and arg:
+            self._focus_workspace_on_server(arg)
+            self._workspace_id = arg
+            self._tab_id = None
+            self._pane_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "new_tab":
+            self._client.create_tab()
+            self.run_worker(self._reload_focus_last_tab(), exclusive=True)
+        elif action == "new_pane":
+            self.run_worker(self._split("horizontal"), exclusive=True)
+        elif action == "split_down":
+            self.run_worker(self._split("vertical"), exclusive=True)
+        elif action == "zoom":
+            self._zoom = not self._zoom
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "close_pane" and arg:
+            self._client.close_pane(arg)
+            self._pane_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "ctx_tab" and arg:
+            self.push_screen(
+                ContextMenuScreen(
+                    "tab",
+                    [("rename", "rename_tab", arg), ("close", "close_tab", arg), ("new tab", "new_tab", None)],
+                )
+            )
+        elif action == "ctx_pane" and arg:
+            self._pane_id = arg
+            self._mark_active_pane()
+            self.push_screen(
+                ContextMenuScreen(
+                    "pane",
+                    [
+                        ("split right", "new_pane", None),
+                        ("split down", "split_down", None),
+                        ("zoom", "zoom", None),
+                        ("copy output", "copy_output", arg),
+                        ("resource usage", "pane_stats", arg),
+                        ("close", "close_pane", arg),
+                    ],
+                )
+            )
+        elif action == "close_tab" and arg:
+            self._client.close_tab(arg)
+            self._tab_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "rename_tab" and arg:
+            self._open_rename_tab(arg)
+        elif action == "ctx_workspace" and arg:
+            self.push_screen(
+                ContextMenuScreen(
+                    "workspace",
+                    [
+                        ("switch to", "switch_workspace", arg),
+                        ("rename", "rename_workspace", arg),
+                        ("move up", "move_workspace_up", arg),
+                        ("move down", "move_workspace_down", arg),
+                        ("resource usage", "workspace_stats", arg),
+                        ("close", "close_workspace", arg),
+                    ],
+                )
+            )
+        elif action == "rename_workspace" and arg:
+            self._open_rename_workspace(arg)
+        elif action == "close_workspace" and arg:
+            self._client.close_workspace(arg)
+            self._workspace_id = None
+            self.run_worker(self.reload(), exclusive=True)
+        elif action in ("move_workspace_up", "move_workspace_down") and arg:
+            self._client.move_workspace(arg, "up" if action == "move_workspace_up" else "down")
+            self.run_worker(self.reload(), exclusive=True)
+        elif action == "open_shell_picker":
+            self.push_screen(ShellPickerScreen(self._shells))
+        elif action == "new_workspace":
+            self._open_new_workspace()
+        elif action == "new_shell" and arg:
+            self.run_worker(self._new_tab_with_shell(arg), exclusive=True)
+        elif action in ("pane_scroll_up", "pane_scroll_down") and arg:
+            self._scroll_pane(arg, "up" if action == "pane_scroll_up" else "down")
+        elif action == "copy_output" and arg:
+            self._copy_pane_output(arg)
+        elif action == "pane_stats" and arg:
+            self._open_stats(f"resource usage · {self._pane_label_map().get(arg, arg)}", [arg])
+        elif action == "workspace_stats" and arg:
+            self._open_stats("resource usage · workspace", self._workspace_pane_ids(arg))
+        elif action == "resource_monitor":
+            self._open_stats("resource monitor · all sessions", None)
+        elif action in (
+            "help", "palette", "settings", "detach", "quit",
+            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace",
+        ):
+            # Global actions (footer buttons / palette) share the keybind handler.
+            self._run_named_action(action)
+
+    def _navigator_rows(self) -> list[tuple[str, Text, str]]:
+        rows: list[tuple[str, Text, str]] = []
+        for workspace in self._workspaces():
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    glyph, color = self._dot(str(pane.get("status", "unknown")))
+                    ws_label = str(workspace.get("label", "ws"))
+                    tab_label = str(tab.get("label", "tab"))
+                    pane_label = str(pane.get("title", "pane"))
+                    plain = f"{ws_label} {tab_label} {pane_label}"
+                    label = Text()
+                    label.append(f"{glyph} ", style=color)
+                    label.append(f"{ws_label} · {tab_label} · {pane_label}", style=self._palette.text)
+                    arg = f"{workspace.get('id')}|{tab.get('id')}|{pane.get('id')}"
+                    rows.append((arg, label, plain))
+        return rows
+
+    def run_menu_action(self, action: str, arg: str | None) -> None:
+        """Run a context-menu item's action (after the menu has closed)."""
+        self._dispatch_activated(action, arg)
+
+    def _pane_label_map(self) -> dict[str, str]:
+        """Map pane id -> 'workspace · tab · pane' for the resource monitor."""
+        labels: dict[str, str] = {}
+        for workspace in self._workspaces():
+            ws = str(workspace.get("label", "ws"))
+            for tab in workspace.get("tabs", []):
+                tb = str(tab.get("label", "tab"))
+                for pane in tab.get("panes", []):
+                    labels[str(pane.get("id"))] = f"{ws} · {tb} · {pane.get('title', 'pane')}"
+        return labels
+
+    def _workspace_pane_ids(self, ws_id: str) -> list[str]:
+        """Every pane id that belongs to one workspace."""
+        for workspace in self._workspaces():
+            if str(workspace.get("id")) == ws_id:
+                return [str(p.get("id")) for t in workspace.get("tabs", []) for p in t.get("panes", [])]
+        return []
+
+    def _open_stats(self, title: str, pane_ids: list[str] | None) -> None:
+        self.push_screen(StatsScreen(title, self._client, self._palette, self._pane_label_map(), pane_ids))
+
+    _PALETTE_ACTIONS = [
+        ("New tab", "new_tab"),
+        ("Split pane right", "split_sbs"),
+        ("Split pane down", "split_stack"),
+        ("Zoom pane", "zoom"),
+        ("Resize mode", "resize"),
+        ("Copy pane output", "copy_output"),
+        ("Close pane", "close_pane"),
+        ("Close tab", "close_tab"),
+        ("Rename tab", "rename_tab"),
+        ("Move tab left", "move_tab_left"),
+        ("Move tab right", "move_tab_right"),
+        ("Next tab", "next_tab"),
+        ("Previous tab", "prev_tab"),
+        ("New workspace…", "new_workspace"),
+        ("Move workspace up", "move_workspace_up"),
+        ("Move workspace down", "move_workspace_down"),
+        ("New terminal (pick shell)…", "open_shell_picker"),
+        ("Change theme…", "settings"),
+        ("Jump to pane…", "goto"),
+        ("Pane menu…", "pane_menu"),
+        ("Resource monitor (CPU/RAM)…", "resource_monitor"),
+        ("Keybindings help", "help"),
+        ("Detach (keep panes running)", "detach"),
+        ("Quit", "quit"),
+    ]
+
+    def _palette_entries(self) -> list[tuple[str, str, bool]]:
+        entries: list[tuple[str, str, bool]] = [(label, action, False) for label, action in self._PALETTE_ACTIONS]
+        for command in self._commands.values():
+            entries.append((f"Run: {command}", command, True))
+        return entries
+
+    def _open_command_palette(self) -> None:
+        self.push_screen(CommandPaletteScreen(self._palette_entries()))
+
+    def run_palette_entry(self, value: str, is_command: bool) -> None:
+        if is_command:
+            self.run_worker(self._new_tab_with_shell(value), exclusive=True)
+        else:
+            self._run_named_action(value)
+
+    def _open_pane_menu(self) -> None:
+        """A selectable pop-up of actions for the focused pane (ctrl+b m)."""
+        if not self._pane_id:
+            return
+        pane_id = self._pane_id
+        self.push_screen(
+            ContextMenuScreen(
+                "pane",
+                [
+                    ("split right", "new_pane", None),
+                    ("split down", "split_down", None),
+                    ("zoom", "zoom", None),
+                    ("scroll up", "pane_scroll_up", pane_id),
+                    ("scroll down", "pane_scroll_down", pane_id),
+                    ("copy output", "copy_output", pane_id),
+                    ("resource usage", "pane_stats", pane_id),
+                    ("close pane", "close_pane", pane_id),
+                ],
+            )
+        )
+
+    def _remember_ratio(self, path: tuple[bool, ...], ratio: float) -> None:
+        """Record a split-ratio change during a divider drag (persisted on release)."""
+        base = self._pending_layout or (self._focused_tab() or {}).get("layout") or {}
+        if not base:
+            return
+        try:
+            layout = TileLayout.from_dict(base)
+        except (KeyError, ValueError, TypeError):
+            return
+        layout.set_ratio_at(path, ratio)
+        self._pending_layout = layout.to_dict()
+
+    def persist_layout(self) -> None:
+        """Persist a drag-resized layout to the server, then re-render."""
+        if not self._pending_layout:
+            return
+        try:
+            self._client.set_layout(self._pending_layout)
+        except Exception:
+            pass
+        self._pending_layout = None
+        self.run_worker(self.reload(), exclusive=True)
+
+    def jump_to(self, target: str) -> None:
+        """Switch focus to ``ws_id|tab_id|pane_id`` (from the navigator)."""
+        parts = target.split("|")
+        if len(parts) != 3:
+            return
+        self._workspace_id, self._tab_id, self._pane_id = parts
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _open_new_workspace(self) -> None:
+        """Browse for a directory, then open a new workspace rooted there."""
+        self.push_screen(DirPickerScreen(os.getcwd(), self._create_workspace_at))
+
+    def _create_workspace_at(self, path: str) -> None:
+        target = os.path.expanduser(path.strip())
+        if not target:
+            return
+        label = os.path.basename(os.path.normpath(target)) or "workspace"
+        try:
+            self._client.create_workspace(label, target)
+        except Exception:
+            return
+        self._workspace_id = None
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _open_rename_workspace(self, workspace_id: str) -> None:
+        workspace = next((w for w in self._workspaces() if w.get("id") == workspace_id), None)
+        current = str(workspace.get("label", "")) if workspace else ""
+        self.push_screen(
+            RenameScreen("rename workspace", current, lambda value: self._rename_workspace(workspace_id, value))
+        )
+
+    def _rename_workspace(self, workspace_id: str, value: str) -> None:
+        if not value.strip():
+            return
+        try:
+            self._client.rename_workspace(workspace_id, value.strip())
+        except Exception:
+            return
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _open_rename_tab(self, tab_id: str | None) -> None:
+        if not tab_id:
+            return
+        tab = next((item for item in self._focused_tabs() if item.get("id") == tab_id), None)
+        current = str(tab.get("label", "")) if tab else ""
+        self.push_screen(RenameScreen("rename tab", current, lambda value: self._rename_tab(str(tab_id), value)))
+
+    def _rename_tab(self, tab_id: str, value: str) -> None:
+        try:
+            self._client.rename_tab(tab_id, value)
+        except Exception:
+            return
+        self.run_worker(self.reload(), exclusive=True)
+
+    def apply_theme(self, name: str) -> None:
+        """Switch the live theme (re-resolves the $ph-* CSS variables)."""
+        palette = BUILTIN_THEMES.get(name.strip().lower())
+        if palette is None:
+            return
+        self._palette = palette
+        self._theme_name = name.strip().lower()
+        try:
+            self.refresh_css()
+        except Exception:
+            pass
+        self.run_worker(self.reload(), exclusive=True)
+
+    def apply_accent(self, hex_color: str) -> None:
+        """Override the accent colour of the current palette, live."""
+        try:
+            self._palette = self._palette.model_copy(update={"accent": hex_color})
+        except Exception:
+            return
+        try:
+            self.refresh_css()
+        except Exception:
+            pass
+        self.run_worker(self.reload(), exclusive=True)
+
+    # ----- state helpers -----
+    def _workspaces(self) -> list[dict]:
+        return self._state.get("workspaces", [])
+
+    def _focused_workspace(self) -> dict | None:
+        workspaces = self._workspaces()
+        for workspace in workspaces:
+            if workspace.get("id") == self._workspace_id:
+                return workspace
+        return workspaces[0] if workspaces else None
+
+    def _focused_tabs(self) -> list[dict]:
+        workspace = self._focused_workspace()
+        return workspace.get("tabs", []) if workspace else []
+
+    def _focused_tab(self) -> dict | None:
+        tabs = self._focused_tabs()
+        for tab in tabs:
+            if tab.get("id") == self._tab_id:
+                return tab
+        return tabs[0] if tabs else None
+
+    def _focused_panes(self) -> list[dict]:
+        tab = self._focused_tab()
+        return tab.get("panes", []) if tab else []
+
+    def _cycle_tab(self, delta: int) -> None:
+        tabs = self._focused_tabs()
+        if not tabs:
+            return
+        ids = [tab["id"] for tab in tabs]
+        index = ids.index(self._tab_id) if self._tab_id in ids else 0
+        self._switch_tab((index + delta) % len(ids))
+
+    def _switch_tab(self, index: int) -> None:
+        tabs = self._focused_tabs()
+        if 0 <= index < len(tabs):
+            self._tab_id = tabs[index]["id"]
+            self._focus_tab_on_server(self._tab_id)
+            self._pane_id = None
+            self.run_worker(self.reload(), exclusive=True)
+
+    def _focus_tab_on_server(self, tab_id: str) -> None:
+        """Keep the server's focused tab in sync so split/close target it."""
+        try:
+            self._client.focus_tab(tab_id)
+        except Exception:
+            pass
+
+    def _cycle_pane(self, delta: int) -> None:
+        panes = self._focused_panes()
+        if not panes:
+            return
+        ids = [pane["id"] for pane in panes]
+        index = ids.index(self._pane_id) if self._pane_id in ids else 0
+        self._pane_id = ids[(index + delta) % len(ids)]
+        self._mark_active_pane()
+
+    _NAV = {
+        "focus_left": NavDirection.LEFT,
+        "focus_down": NavDirection.DOWN,
+        "focus_up": NavDirection.UP,
+        "focus_right": NavDirection.RIGHT,
+    }
+
+    def _focus_direction(self, action: str) -> None:
+        """Move focus to the geometric neighbour pane in the split tree."""
+        if not self._pane_id:
+            return
+        layout_data = (self._focused_tab() or {}).get("layout") or {}
+        if not layout_data:
+            return
+        try:
+            layout = TileLayout.from_dict(layout_data)
+        except (KeyError, ValueError, TypeError):
+            return
+        if not layout.contains(self._pane_id):
+            return
+        layout.focus = self._pane_id
+        region = self.query_one("#panes", Horizontal).size
+        neighbour = layout.find_in_direction(self._NAV[action], Rect(0, 0, region.width, region.height))
+        if neighbour:
+            self._pane_id = neighbour
+            self._mark_active_pane()
+            self._refresh_statusbar()
+
+    _RESIZE_NAV = {
+        "h": NavDirection.LEFT,
+        "l": NavDirection.RIGHT,
+        "j": NavDirection.DOWN,
+        "k": NavDirection.UP,
+        "left": NavDirection.LEFT,
+        "right": NavDirection.RIGHT,
+        "down": NavDirection.DOWN,
+        "up": NavDirection.UP,
+    }
+
+    def _handle_resize_key(self, key: str) -> None:
+        if key in ("escape", "enter", "q", "ctrl+b"):
+            self._resize = False
+            self._refresh_hint()
+            return
+        nav = self._RESIZE_NAV.get(key)
+        if nav is not None:
+            self._resize_focused(nav)
+
+    def _resize_focused(self, nav: NavDirection) -> None:
+        """Adjust the focused pane's adjacent split ratio and persist it."""
+        if not self._pane_id:
+            return
+        layout_data = (self._focused_tab() or {}).get("layout") or {}
+        if not layout_data:
+            return
+        try:
+            layout = TileLayout.from_dict(layout_data)
+        except (KeyError, ValueError, TypeError):
+            return
+        if not layout.contains(self._pane_id):
+            return
+        layout.focus = self._pane_id
+        region = self.query_one("#panes", Horizontal).size
+        if not layout.resize_focused(nav, 0.05, Rect(0, 0, region.width, region.height)):
+            return
+        try:
+            self._client.set_layout(layout.to_dict())
+        except Exception:
+            return
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _cycle_workspace(self, delta: int) -> None:
+        workspaces = self._workspaces()
+        if not workspaces:
+            return
+        ids = [workspace["id"] for workspace in workspaces]
+        current = self._workspace_id if self._workspace_id in ids else ids[0]
+        self._workspace_id = ids[(ids.index(current) + delta) % len(ids)]
+        self._focus_workspace_on_server(self._workspace_id)
+        self._tab_id = None
+        self._pane_id = None
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _focus_workspace_on_server(self, workspace_id: str) -> None:
+        """Keep the server's focused workspace in sync so scoped ops are correct."""
+        try:
+            self._client.focus_workspace(workspace_id)
+        except Exception:
+            pass
+
+    # ----- rendering -----
+    async def reload(self) -> None:
+        """Fetch state and rebuild the tab bar, sidebar, and pane views."""
+        try:
+            self._state = self._client.state()
+        except Exception:
+            return
+        if not self._workspaces():
+            # Self-heal: never strand the user on an empty session (e.g. after
+            # closing the last workspace). Seed one default workspace + tab.
+            if not self._seeding:
+                self._seeding = True
+                try:
+                    self._client.create_workspace("main", os.getcwd())
+                    self._client.create_tab()
+                    self._state = self._client.state()
+                except Exception:
+                    pass
+        else:
+            self._seeding = False
+        workspace = self._focused_workspace()
+        self._workspace_id = workspace.get("id") if workspace else None
+        tab = self._focused_tab()
+        self._tab_id = tab.get("id") if tab else None
+        panes = self._focused_panes()
+        if self._pane_id not in {pane["id"] for pane in panes}:
+            self._pane_id = panes[0]["id"] if panes else None
+
+        self._ensure_shells()
+        self._branches = {str(ws.get("id")): _git_branch(str(ws.get("cwd", ""))) for ws in self._workspaces()}
+        self._ahead_behind = {
+            ws_id: _git_ahead_behind(str(ws.get("cwd", "")))
+            for ws in self._workspaces()
+            if (ws_id := str(ws.get("id"))) and self._branches.get(ws_id)
+        }
+        try:
+            await self._refresh_tabbar()
+            await self._refresh_sidebar()
+            await self._rebuild_panes()
+            self._refresh_statusbar()
+        except Exception:
+            return  # the screen may be tearing down (a reload worker can outlive the DOM)
+
+    async def _reload_focus_last_tab(self) -> None:
+        """Reload, then switch focus to the newly created (last) tab."""
+        await self.reload()
+        tabs = self._focused_tabs()
+        if tabs:
+            self._tab_id = tabs[-1]["id"]
+            self._pane_id = None
+            await self.reload()
+
+    async def _reload_focus_last_pane(self) -> None:
+        """Reload, then focus the newly created (last) pane in the tab."""
+        await self.reload()
+        panes = self._focused_panes()
+        if panes:
+            self._pane_id = panes[-1]["id"]
+            self._mark_active_pane()
+            self._refresh_statusbar()
+
+    async def _new_tab_with_shell(self, shell: str) -> None:
+        """Create a tab and run the chosen shell in its pane, then focus it."""
+        response = self._client.create_tab()
+        pane_id = None
+        if isinstance(response, dict):
+            pane_id = response.get("result", {}).get("tab", {}).get("focused_pane_id")
+        # Start the chosen shell *before* reload, so _ensure_shells sees it
+        # running and does not override it with the default shell.
+        if pane_id:
+            try:
+                self._client.start_pane(str(pane_id), shell)
+            except Exception:
+                pane_id = None
+        await self.reload()
+        tabs = self._focused_tabs()
+        if tabs:
+            self._tab_id = tabs[-1]["id"]
+            self._pane_id = None
+            await self.reload()
+
+    async def _rebuild_panes(self) -> None:
+        container = self.query_one("#panes", Horizontal)
+        await container.remove_children()
+        panes = {str(pane["id"]): pane for pane in self._focused_panes()}
+        if not panes:
+            return
+        if self._zoom and self._pane_id and self._pane_id in panes:
+            await container.mount(self._pane_view(self._pane_id, panes))
+            self._mark_active_pane()
+            self._update_pane_contents()
+            return
+        tab = self._focused_tab() or {}
+        widget = self._layout_widget(tab.get("layout") or {}, panes)
+        if widget is not None:
+            await container.mount(widget)
+        else:  # fallback: flat side-by-side row if the layout is missing/out-of-sync
+            await container.mount(*[self._pane_view(pid, panes) for pid in panes])
+        self._mark_active_pane()
+        self._update_pane_contents()
+
+    def _pane_view(self, pane_id: str, panes: dict[str, dict]) -> PaneView:
+        pane = panes.get(pane_id, {})
+        return PaneView(pane_id, f"{pane.get('title', 'pane')} · {pane.get('status', '?')}")
+
+    def _layout_widget(self, layout_data: dict, panes: dict[str, dict]) -> Widget | None:
+        if not layout_data:
+            return None
+        try:
+            layout = TileLayout.from_dict(layout_data)
+        except (KeyError, ValueError, TypeError):
+            return None
+        if set(layout.pane_ids()) != set(panes):
+            return None
+        return self._build_node_widget(layout.root, panes)
+
+    def _build_node_widget(self, node: object, panes: dict[str, dict], path: tuple[bool, ...] = ()) -> Widget:
+        if isinstance(node, PaneNode):
+            return self._pane_view(node.pane_id, panes)
+        first = self._build_node_widget(node.first, panes, path + (False,))  # type: ignore[attr-defined]
+        second = self._build_node_widget(node.second, panes, path + (True,))  # type: ignore[attr-defined]
+        ratio = max(1, min(99, round(node.ratio * 100)))  # type: ignore[attr-defined]
+        direction = node.direction  # type: ignore[attr-defined]
+        divider = SplitDivider(direction, path)
+        if direction == Direction.HORIZONTAL:
+            first.styles.width = f"{ratio}fr"
+            first.styles.height = "1fr"
+            second.styles.width = f"{100 - ratio}fr"
+            second.styles.height = "1fr"
+            box: Widget = Horizontal(first, divider, second)
+        else:
+            first.styles.height = f"{ratio}fr"
+            first.styles.width = "1fr"
+            second.styles.height = f"{100 - ratio}fr"
+            second.styles.width = "1fr"
+            box = Vertical(first, divider, second)
+        box.styles.width = "1fr"
+        box.styles.height = "1fr"
+        return box
+
+    async def _split(self, direction: str) -> None:
+        try:
+            response = self._client.split_pane(direction)
+        except Exception:
+            return
+        new_id = None
+        if isinstance(response, dict):
+            new_id = response.get("result", {}).get("pane", {}).get("pane_id")
+        await self.reload()
+        if new_id and new_id in {str(pane["id"]) for pane in self._focused_panes()}:
+            self._pane_id = new_id
+            self._mark_active_pane()
+            self._refresh_statusbar()
+
+    def _mark_active_pane(self) -> None:
+        for view in self.query(PaneView):
+            view.set_class(view.pane_id == self._pane_id, "active")
+
+    async def _refresh_tabbar(self) -> None:
+        bar = self.query_one("#tabbar", HorizontalScroll)
+        await bar.remove_children()
+        widgets: list[Static] = []
+        workspace = self._focused_workspace()
+        if workspace:
+            widgets.append(Static(Text(f" {workspace.get('label', 'ws')} │"), classes="wsname"))
+        tabs = self._focused_tabs()
+        for index, tab in enumerate(tabs, start=1):
+            tab_id = str(tab.get("id"))
+            active = tab_id == self._tab_id
+            rollup = _rollup([str(pane.get("status", "unknown")) for pane in tab.get("panes", [])])
+            glyph, color = self._dot(rollup)
+            label = Text()
+            label.append(f" {glyph} ", style=color)
+            label.append(f"{index}:{tab.get('label', 'tab')} ")
+            classes = "tabcell active" if active else "tabcell"
+            widgets.append(
+                Clickable(
+                    label,
+                    "switch_tab",
+                    tab_id,
+                    dbl_action="rename_tab",
+                    ctx_action="ctx_tab",
+                    id=f"tabcell-{tab_id}",
+                    classes=classes,
+                )
+            )
+            if len(tabs) > 1:  # never offer to close the last tab
+                widgets.append(Clickable("✕ ", "close_tab", tab_id, id=f"tabclose-{tab_id}", classes="tabclose"))
+        widgets.append(Clickable(" + ", "new_tab", id="tabplus", classes="tabplus"))
+        await bar.mount(*widgets)
+        # When tabs overflow the width, keep the active one (and the +) in view.
+        active_cell = next((w for w in widgets if getattr(w, "id", "") == f"tabcell-{self._tab_id}"), None)
+        if active_cell is not None:
+            self.call_after_refresh(active_cell.scroll_visible, animate=False)
+
+    async def _refresh_sidebar(self) -> None:
+        nav = self.query_one("#nav", Vertical)
+        await nav.remove_children()
+        widgets: list[Static] = [Static(Text("spaces", style=self._palette.subtext0), classes="navtop")]
+        for index, workspace in enumerate(self._workspaces(), start=1):
+            ws_id = str(workspace.get("id"))
+            statuses = [str(p.get("status", "unknown")) for t in workspace.get("tabs", []) for p in t.get("panes", [])]
+            glyph, color = self._dot(_rollup(statuses))
+            active = ws_id == self._workspace_id
+            row = Text()
+            row.append(f"{index} ", style=self._palette.overlay0)
+            row.append(f"{glyph} ", style=color)
+            label_style = f"bold {self._palette.accent}" if active else self._palette.text
+            row.append(str(workspace.get("label", "ws")), style=label_style)
+            branch = self._branches.get(ws_id, "")
+            if branch:
+                row.append(f"\n   {branch}", style=self._palette.overlay0)
+                ahead, behind = self._ahead_behind.get(ws_id, (0, 0))
+                if ahead:
+                    row.append(f" ↑{ahead}", style=self._palette.green)
+                if behind:
+                    row.append(f" ↓{behind}", style=self._palette.red)
+            widgets.append(
+                Clickable(
+                    row,
+                    "switch_workspace",
+                    ws_id,
+                    ctx_action="ctx_workspace",
+                    id=f"wsrow-{ws_id}",
+                    classes="wsrow",
+                )
+            )
+        widgets.append(Static("", classes="navgap"))
+        widgets.append(Clickable("＋ workspace", "new_workspace", id="newws", classes="newterm"))
+        widgets.append(Clickable("＋ new terminal ▾", "open_shell_picker", id="newterm", classes="newterm"))
+        widgets.append(Static(self._agents_text(), id="agents", classes="agents"))
+        await nav.mount(*widgets)
+
+    def _agents_text(self) -> Text:
+        """The 'agents' sidebar section; working agents show an animated spinner."""
+        text = Text("agents", style=self._palette.subtext0)
+        frame = _SPINNER[self._spin % len(_SPINNER)]
+        for workspace in self._workspaces():
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    if not pane.get("agent"):
+                        continue
+                    status = str(pane.get("status", "unknown"))
+                    if status == "working":
+                        glyph, color = frame, self._palette.yellow
+                    else:
+                        glyph, color = self._dot(status)
+                    text.append("\n")
+                    text.append(f"{glyph} ", style=color)
+                    text.append(f"{pane.get('agent')}·{pane.get('title', 'pane')}", style=self._palette.text)
+        return text
+
+    def _has_working_agent(self) -> bool:
+        return any(
+            pane.get("agent") and str(pane.get("status")) == "working"
+            for workspace in self._workspaces()
+            for tab in workspace.get("tabs", [])
+            for pane in tab.get("panes", [])
+        )
+
+    def _refresh_statusbar(self) -> None:
+        workspace = self._focused_workspace()
+        bar = Text()
+        if workspace:
+            bar.append(str(workspace.get("cwd", "")).replace("\\", "/"), style=self._palette.accent)
+            branch = self._branches.get(str(workspace.get("id", "")), "")
+            if branch:
+                bar.append(f"  ⎇ {branch}", style=self._palette.green)
+            bar.append("  ")
+        mode = "RESIZE" if self._resize else ("PREFIX" if self._prefix else "TERMINAL")
+        bar.append(mode, style=f"bold {self._palette.overlay0}")
+        if self._resize:
+            bar.append("  h/l width · j/k height · esc done", style=self._palette.subtext0)
+        elif self._prefix:
+            bar.append("  next key = action · ? = help", style=self._palette.subtext0)
+        if self._pane_id:
+            bar.append("  ")
+            bar.append(str(self._pane_id), style=self._palette.blue)
+        bar.append("   ● ", style=self._palette.accent)
+        bar.append(self._theme_name, style=self._palette.subtext0)
+        self.query_one("#statusbar", Static).update(bar)
+
+    def _refresh_hint(self) -> None:
+        # The bottom action bar is clickable buttons now; transient prefix/resize
+        # guidance lives in the status bar's mode indicator.
+        self._refresh_statusbar()
+
+    def _ensure_shells(self) -> None:
+        """Revive any pane without a live session, like herdr.
+
+        After a server restart, panes persist in state but their PTY sessions do
+        not. A non-running pane that hosts an agent is **resumed** by re-running
+        its command (honouring ``session.resume_agents_on_restore``); any other
+        non-running pane is (re)started as a shell so it is always typeable.
+        Live panes are left untouched.
+        """
+        shell = _default_shell()
+        resume_agents = True
+        try:
+            resume_agents = load_config().session.resume_agents_on_restore
+        except Exception:
+            pass
+        for pane in self._focused_panes():
+            if pane.get("running"):
+                continue
+            command = str(pane.get("command") or "")
+            if resume_agents and pane.get("agent") and command:
+                target = command  # resume the agent in its pane
+            else:
+                target = shell
+            try:
+                self._client.start_pane(str(pane["id"]), target)
+            except Exception:
+                continue
+
+    def _scroll_pane(self, pane_id: str, direction: str) -> None:
+        try:
+            self._client.pane_scroll(pane_id, direction)
+        except Exception:
+            return
+        self._update_pane_contents()
+
+    def _copy_pane_output(self, pane_id: str | None) -> None:
+        """Copy a pane's text (visible + scrollback) to the system clipboard."""
+        if not pane_id:
+            return
+        try:
+            text = self._client.pane_read(pane_id, lines=2000)
+        except Exception:
+            return
+        self.copy_to_clipboard(text)
+        self.notify("copied pane output to clipboard", timeout=3)
+
+    def _tick(self) -> None:
+        self._spin += 1
+        self._update_pane_contents()
+        # Animate the working spinner without a full sidebar rebuild.
+        if self._has_working_agent():
+            try:
+                self.query_one("#agents", Static).update(self._agents_text())
+            except Exception:
+                pass
+        # ~1s: poll live state so background agent-state changes raise toasts.
+        if self._spin % 10 == 0:
+            self.run_worker(self._poll_state(), group="poll", exclusive=True)
+
+    async def _poll_state(self) -> None:
+        try:
+            self._state = self._client.state()
+        except Exception:
+            return
+        self._emit_agent_toasts()
+        try:
+            self.query_one("#agents", Static).update(self._agents_text())
+        except Exception:
+            pass
+
+    def _emit_agent_toasts(self) -> None:
+        """Pop a toast when a background agent becomes blocked or finishes."""
+        for workspace in self._workspaces():
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    if not pane.get("agent"):
+                        continue
+                    pane_id = str(pane.get("id"))
+                    status = str(pane.get("status", ""))
+                    previous = self._agent_status.get(pane_id)
+                    self._agent_status[pane_id] = status
+                    if previous is None or previous == status or pane_id == self._pane_id:
+                        continue
+                    name = f"{pane.get('agent')}·{pane.get('title', 'pane')}"
+                    if status == "blocked":
+                        self.notify(f"{name} needs attention", severity="warning", timeout=6)
+                    elif status in ("idle", "done") and previous == "working":
+                        self.notify(f"{name} finished", severity="information", timeout=5)
+
+    def _update_pane_contents(self) -> None:
+        for view in self.query(PaneView):
+            try:
+                output = self._client.pane_read(
+                    view.pane_id, lines=400, styled=True, cursor=view.pane_id == self._pane_id
+                )
+            except Exception:
+                continue
+            if output and output.strip():
+                view.update(Text.from_ansi(output))
+            else:
+                view.update(Text("starting shell…", style=self._palette.overlay0))
+
+    # ----- styling helpers -----
+    def _dot(self, status: str) -> tuple[str, str]:
+        glyph = _STATUS_GLYPH.get(status, "·")
+        color = {
+            "blocked": self._palette.red,
+            "working": self._palette.yellow,
+            "done": self._palette.teal,
+            "idle": self._palette.green,
+        }.get(status, self._palette.overlay0)
+        return glyph, color
+
+
+def main() -> None:
+    """Launch the Textual UI."""
+    PyHerdrTui().run()

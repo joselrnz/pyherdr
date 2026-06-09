@@ -1,0 +1,10 @@
+<svg viewBox="0 0 232 28" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="pyherdr version badge">
+  <rect width="118" height="28" rx="4" fill="#1B232D"/>
+  <rect x="118" width="114" height="28" rx="4" fill="#306998"/>
+  <rect x="114" width="8" height="28" fill="#306998"/>
+  <path d="M10 7 H22 L16 19 H10 Z" fill="#FFD43B"/>
+  <g font-family="'JetBrains Mono',Consolas,monospace" font-size="14" fill="#C7D2DC">
+    <text x="32" y="19">pyherdr</text>
+    <text x="132" y="19" fill="#FFFFFF">v0.0.2 · py311</text>
+  </g>
+</svg>

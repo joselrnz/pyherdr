@@ -1,0 +1,22 @@
+<svg viewBox="0 0 760 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PyHerdr logo for light backgrounds">
+  <defs>
+    <linearGradient id="bl" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4B8BBE"/><stop offset="100%" stop-color="#306998"/>
+    </linearGradient>
+    <linearGradient id="yl" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F5C518"/><stop offset="100%" stop-color="#FFD43B"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(16,11)">
+    <rect x="0" y="0" width="84" height="84" fill="url(#bl)" rx="6"/>
+    <circle cx="30" cy="30" r="8" fill="#FFFFFF"/>
+    <rect x="96" y="0" width="62" height="84" fill="#2A3542" rx="6"/>
+    <path d="M0 96 H84 L46 158 H0 Z" fill="url(#yl)"/>
+    <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M100 104 L126 130 L100 156" stroke="#E0A800" stroke-width="13"/>
+      <line x1="134" y1="158" x2="158" y2="158" stroke="#306998" stroke-width="13"/>
+    </g>
+  </g>
+  <text x="206" y="118" font-family="'JetBrains Mono','Fira Code',Consolas,monospace"
+        font-size="78" font-weight="700" letter-spacing="2" fill="#1A2530">PyHerdr</text>
+</svg>

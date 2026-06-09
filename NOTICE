@@ -1,0 +1,18 @@
+PyHerdr
+=======
+
+PyHerdr is a Python fork of Herdr, a Rust terminal multiplexer for AI coding
+agents.
+
+This project reimplements Herdr's concepts in Python. It is derived from and
+inspired by the upstream Herdr project.
+
+Upstream project:
+  - Name:    Herdr
+  - License: AGPL-3.0-or-later
+
+PyHerdr is distributed under AGPL-3.0-or-later. See the LICENSE file for the
+full license text.
+
+Original Herdr code and concepts are copyright their respective authors. PyHerdr
+modifications are copyright the PyHerdr contributors.

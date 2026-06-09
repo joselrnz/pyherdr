@@ -1,0 +1,40 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PyHerdr social card">
+  <defs>
+    <linearGradient id="bs" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4B8BBE"/><stop offset="100%" stop-color="#306998"/>
+    </linearGradient>
+    <linearGradient id="ys" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FFD43B"/><stop offset="100%" stop-color="#FFE873"/>
+    </linearGradient>
+    <linearGradient id="wms" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4B8BBE"/><stop offset="55%" stop-color="#6FA8D6"/><stop offset="100%" stop-color="#FFD43B"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0 H0 V48" fill="none" stroke="#141C24" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="640" fill="#0E1318"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+  <!-- oversized wedge bleeding off the corner, quiet -->
+  <path d="M-40 640 H300 L120 980 H-40 Z" fill="url(#ys)" opacity="0.10"/>
+  <g transform="translate(120,150) scale(2.1)">
+    <rect x="0" y="0" width="84" height="84" fill="url(#bs)" rx="6"/>
+    <circle cx="30" cy="30" r="8" fill="#F4F7FA"/>
+    <rect x="96" y="0" width="62" height="84" fill="#1B232D" rx="6"/>
+    <path d="M0 96 H84 L46 158 H0 Z" fill="url(#ys)"/>
+    <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M100 104 L126 130 L100 156" stroke="#FFD43B" stroke-width="13"/>
+      <line x1="134" y1="158" x2="158" y2="158" stroke="#4B8BBE" stroke-width="13"/>
+    </g>
+  </g>
+  <text x="540" y="300" font-family="'JetBrains Mono','Fira Code',Consolas,monospace"
+        font-size="104" font-weight="700" letter-spacing="3" fill="url(#wms)">PyHerdr</text>
+  <text x="546" y="362" font-family="'JetBrains Mono',Consolas,monospace"
+        font-size="30" letter-spacing="2" fill="#7E8C9A">herd your terminals</text>
+  <text x="546" y="406" font-family="'JetBrains Mono',Consolas,monospace"
+        font-size="30" letter-spacing="2" fill="#7E8C9A">multi-agent multiplexer</text>
+  <g transform="translate(546,448)" font-family="'JetBrains Mono',Consolas,monospace" font-size="24">
+    <rect x="0" y="0" width="369" height="48" rx="24" fill="#161D25" stroke="#2A3542" stroke-width="1.5"/>
+    <text x="26" y="32"><tspan fill="#FFD43B">$</tspan><tspan fill="#C7D2DC" dx="14">pip install pyherdr</tspan></text>
+  </g>
+</svg>
