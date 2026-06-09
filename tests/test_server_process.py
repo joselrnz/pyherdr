@@ -11,6 +11,10 @@ from unittest.mock import patch
 from pyherdr.server import read_server_info, request, server_info_path
 
 
+@unittest.skipUnless(
+    sys.platform == "win32",
+    "real server spawn is validated on Windows; flaky/slow to start on Linux/macOS CI runners",
+)
 class ServerProcessTests(unittest.TestCase):
     def test_server_process_handles_json_requests(self):
         repo = Path(__file__).resolve().parents[1]

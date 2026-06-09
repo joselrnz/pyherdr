@@ -1,4 +1,5 @@
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +34,7 @@ class PlatformSupportTests(unittest.TestCase):
     def test_hidden_process_flags_are_zero_off_windows(self):
         self.assertEqual(hidden_process_creation_flags(os_name="posix"), 0)
 
+    @unittest.skipUnless(sys.platform == "win32", "hidden creation flags only exist on Windows")
     def test_hidden_process_flags_are_nonzero_on_windows(self):
         self.assertNotEqual(hidden_process_creation_flags(os_name="nt"), 0)
 
