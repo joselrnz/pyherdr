@@ -25,3 +25,4 @@ dist/
 /tests/test_porting_checklist.py
 /tests/test_porting_inventory.py
 /tests/test_porting_tree.py
+/.claude/
