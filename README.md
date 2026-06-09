@@ -5,7 +5,7 @@
 
 A terminal multiplexer for AI coding agents — a pure-Python port of herdr.
 
-[![PyPI](https://img.shields.io/pypi/v/pyherdr.svg)](https://pypi.org/project/pyherdr/)
+[![PyPI](https://img.shields.io/badge/pypi-v0.0.4-3775A9.svg)](https://pypi.org/project/pyherdr/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Lint: ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
