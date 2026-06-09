@@ -1,7 +1,7 @@
 <div align="center">
 
-<!-- Banner: assets/banner.svg (relative path renders locally + on GitHub). -->
-<img src="assets/banner.svg" alt="PyHerdr — herd your terminals · multi-agent multiplexer" width="820">
+<!-- Banner: PNG via absolute raw URL so it renders on GitHub AND PyPI (relative paths / raw SVG don't render on PyPI). -->
+<img src="https://raw.githubusercontent.com/joselrnz/pyherdr/main/assets/banner.png" alt="PyHerdr — herd your terminals · multi-agent multiplexer" width="820">
 
 A terminal multiplexer for AI coding agents — a pure-Python port of herdr.
 
