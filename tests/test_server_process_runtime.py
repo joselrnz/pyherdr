@@ -19,6 +19,10 @@ ECHO_SCRIPT = (
 
 
 @unittest.skipUnless(pty_available(), "no PTY backend available on this platform")
+@unittest.skipUnless(
+    sys.platform == "win32",
+    "real server+PTY spawn is validated on Windows; flaky/slow to start on Linux/macOS CI runners",
+)
 class ServerProcessRuntimeTests(unittest.TestCase):
     def setUp(self):
         repo = Path(__file__).resolve().parents[1]
