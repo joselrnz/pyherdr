@@ -1250,12 +1250,13 @@ class DirPickerScreen(ModalScreen[None]):
         width: auto;
         height: 1;
         min-height: 1;
-        color: $ph-green;
+        background: $ph-green;
+        color: $ph-base;
         text-style: bold;
         padding: 0 1;
         margin: 1 0 0 1;
     }
-    .dir-current-open:hover { background: $ph-green; color: $ph-base; }
+    .dir-current-open:hover { background: $ph-accent; color: $ph-base; }
     #dir-list { height: auto; max-height: 16; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
