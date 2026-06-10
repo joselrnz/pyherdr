@@ -1075,6 +1075,8 @@ class FanoutScreen(ModalScreen[None]):
         count = int(result.get("target_count", 0))
         text = Text()
         text.append(f"preview: {count} {'pane' if count == 1 else 'panes'}\n", style="bold")
+        if result.get("requires_confirmation") and result.get("risk"):
+            text.append(f"risk: {result['risk']} · send confirms\n", style="#f38ba8")
         for record in result.get("targets", [])[:6]:
             workspace = str(record.get("workspace_label", "ws"))
             tab = str(record.get("tab_label", "tab"))
@@ -1781,7 +1783,7 @@ class PyHerdrTui(App):
         self.push_screen(FanoutScreen(choices, self._fanout_submit))
 
     def _fanout_submit(self, selector: str, command: str, dry_run: bool) -> dict[str, Any]:
-        return self._client.pane_fanout([selector], command, enter=True, dry_run=dry_run)
+        return self._client.pane_fanout([selector], command, enter=True, dry_run=dry_run, confirm_risky=not dry_run)
 
     def _fanout_choices(self) -> list[FanoutChoice]:
         choices: list[FanoutChoice] = []

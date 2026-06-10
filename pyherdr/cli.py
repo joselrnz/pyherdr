@@ -279,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pane_fanout.add_argument("--all", action="store_true", help="target every pane in the current session")
     pane_fanout.add_argument("--execute", action="store_true", help="send text after previewing targets")
+    pane_fanout.add_argument(
+        "--confirm-risky",
+        action="store_true",
+        help="allow executing destructive-looking commands after preview",
+    )
     pane_fanout.add_argument("--no-enter", action="store_true", help="insert text without pressing Enter")
 
     agent = sub.add_parser("agent", help="agent commands (resolve by name or pane id)")
@@ -741,6 +746,7 @@ def run_pane(args) -> int:
                     "text": command,
                     "enter": not args.no_enter,
                     "dry_run": not args.execute,
+                    "confirm_risky": args.confirm_risky,
                 },
             }
         )

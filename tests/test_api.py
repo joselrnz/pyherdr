@@ -117,6 +117,58 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(processes.broadcasts, [([first.id, second.id], "git status")])
         self.assertNotIn(third.id, [target["pane_id"] for target in result["targets"]])
 
+    def test_pane_fanout_risky_multi_pane_command_requires_confirmation(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        first = state.focused_workspace.focused_tab.focused_pane
+        second = state.create_pane(state.focused_workspace.id, state.focused_workspace.focused_tab.id, "review")
+        processes = _FakeProcesses()
+
+        preview = dispatch(
+            state,
+            {
+                "id": "fanout",
+                "method": "pane.fanout",
+                "params": {"targets": ["all"], "text": "rm -rf build", "dry_run": True},
+            },
+            processes,
+        )
+
+        preview_result = preview["result"]
+        self.assertTrue(preview_result["requires_confirmation"])
+        self.assertIn("recursive force remove", preview_result["risk"])
+
+        blocked = dispatch(
+            state,
+            {
+                "id": "fanout",
+                "method": "pane.fanout",
+                "params": {"targets": ["all"], "text": "rm -rf build", "dry_run": False},
+            },
+            processes,
+        )
+
+        self.assertIn("error", blocked)
+        self.assertIn("confirm_risky", blocked["error"]["message"])
+        self.assertEqual(processes.broadcasts, [])
+
+        confirmed = dispatch(
+            state,
+            {
+                "id": "fanout",
+                "method": "pane.fanout",
+                "params": {
+                    "targets": ["all"],
+                    "text": "rm -rf build",
+                    "dry_run": False,
+                    "confirm_risky": True,
+                },
+            },
+            processes,
+        )
+
+        self.assertEqual(confirmed["result"]["sent"], 2)
+        self.assertEqual(processes.broadcasts, [([first.id, second.id], "rm -rf build\n")])
+
 
 if __name__ == "__main__":
     unittest.main()

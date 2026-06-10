@@ -105,6 +105,7 @@ class PaneClient(Protocol):
         *,
         enter: bool = True,
         dry_run: bool = True,
+        confirm_risky: bool = False,
     ) -> dict[str, Any]:
         """Preview or send text to panes selected by fan-out target selectors."""
         ...
@@ -189,6 +190,14 @@ class ServerClient:
         *,
         enter: bool = True,
         dry_run: bool = True,
+        confirm_risky: bool = False,
     ) -> dict[str, Any]:
-        response = self._request("pane.fanout", targets=targets, text=text, enter=enter, dry_run=dry_run)
+        response = self._request(
+            "pane.fanout",
+            targets=targets,
+            text=text,
+            enter=enter,
+            dry_run=dry_run,
+            confirm_risky=confirm_risky,
+        )
         return response.get("result", {})

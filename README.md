@@ -156,6 +156,9 @@ pyherdr server stop
 
 In the TUI, `ctrl+b` then `F` opens the command fan-out picker. Pick a target
 group, type a command, press enter to preview resolved panes, then send.
+Destructive-looking multi-pane commands are blocked unless the preview is
+explicitly confirmed (`--confirm-risky` in the CLI; the TUI send button confirms
+after preview).
 
 The TUI workflow view shows a compact terminal call graph with response/cycle
 markers. Mermaid output is source text for Mermaid-compatible renderers. For a

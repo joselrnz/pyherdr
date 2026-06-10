@@ -273,6 +273,7 @@ class DemoScreenshotClient:
         *,
         enter: bool = True,
         dry_run: bool = True,
+        confirm_risky: bool = False,
     ) -> dict[str, Any]:
         selector = targets[0] if targets else ""
         records = []
@@ -301,6 +302,8 @@ class DemoScreenshotClient:
             "dry_run": dry_run,
             "enter": enter,
             "target_count": len(records),
+            "requires_confirmation": False,
+            "risk": "",
             "targets": records,
             "sent": 0 if dry_run else len(records),
             "bytes": len((text + ("\n" if enter else "")).encode("utf-8")),

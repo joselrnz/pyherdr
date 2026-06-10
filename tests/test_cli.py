@@ -41,6 +41,7 @@ class CliTests(unittest.TestCase):
                 "--target",
                 "pane:1-1",
                 "--execute",
+                "--confirm-risky",
                 "--no-enter",
                 "pytest",
                 "-q",
@@ -52,6 +53,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.all)
         self.assertEqual(args.target, ["session:current", "workspace:main", "tab:tests", "pane:1-1"])
         self.assertTrue(args.execute)
+        self.assertTrue(args.confirm_risky)
         self.assertTrue(args.no_enter)
         self.assertEqual(args.command_parts, ["pytest", "-q"])
 

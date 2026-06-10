@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -778,8 +779,13 @@ def _pane_fanout(state: AppState, params: dict[str, Any], processes: TerminalMan
         raise ValueError("fanout targets matched no panes")
     pane_ids = [record["pane_id"] for record in target_records]
     payload = text + ("\n" if enter else "")
+    risk = _fanout_risk(text) if len(target_records) > 1 else ""
+    requires_confirmation = bool(risk)
+    confirmed = _param_bool(params.get("confirm_risky") or params.get("require_confirm"), default=False)
     sent = 0
     if not dry_run:
+        if requires_confirmation and not confirmed:
+            raise ValueError(f"pane.fanout risky command requires confirm_risky: {risk}")
         if processes is None:
             raise ValueError("pane.fanout execute requires a server process manager")
         sent = processes.broadcast(pane_ids, payload)
@@ -788,6 +794,8 @@ def _pane_fanout(state: AppState, params: dict[str, Any], processes: TerminalMan
         "dry_run": dry_run,
         "enter": enter,
         "target_count": len(target_records),
+        "requires_confirmation": requires_confirmation,
+        "risk": risk,
         "targets": target_records,
         "sent": sent,
         "bytes": len(payload.encode("utf-8")),
@@ -813,7 +821,9 @@ def _iter_fanout_matches(state: AppState, selector: str):
     normalized = selector.strip()
     if not normalized:
         return []
-    if ":" in normalized:
+    if normalized.lower() == "all":
+        kind, value = "all", ""
+    elif ":" in normalized:
         kind, value = normalized.split(":", 1)
         kind = kind.strip().lower()
         value = value.strip()
@@ -847,6 +857,26 @@ def _iter_fanout_matches(state: AppState, selector: str):
             if item[0].agent.lower() == value.lower() or item[0].title.lower() == value.lower()
         ]
     raise ValueError(f"unknown fanout target selector: {kind}")
+
+
+_RISKY_FANOUT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\brm\s+-[^\n;&|]*[rf][^\n;&|]*[rf]\b", re.IGNORECASE), "recursive force remove"),
+    (re.compile(r"\bgit\s+reset\s+--hard\b", re.IGNORECASE), "hard git reset"),
+    (re.compile(r"\bgit\s+clean\s+-[^\n;&|]*[fd][^\n;&|]*[fd]\b", re.IGNORECASE), "force git clean"),
+    (re.compile(r"\bremove-item\b[^\n;&|]*\b-recurse\b", re.IGNORECASE), "recursive remove-item"),
+    (re.compile(r"\bdel(?:ete)?\b[^\n;&|]*/[sq]\b", re.IGNORECASE), "recursive/silent delete"),
+    (re.compile(r"\brmdir\b[^\n;&|]*/s\b", re.IGNORECASE), "recursive directory delete"),
+    (re.compile(r"\bdocker\s+system\s+prune\b", re.IGNORECASE), "docker system prune"),
+    (re.compile(r"\bterraform\s+destroy\b", re.IGNORECASE), "terraform destroy"),
+    (re.compile(r"\bkubectl\s+delete\b", re.IGNORECASE), "kubectl delete"),
+)
+
+
+def _fanout_risk(text: str) -> str:
+    for pattern, reason in _RISKY_FANOUT_PATTERNS:
+        if pattern.search(text):
+            return reason
+    return ""
 
 
 def _iter_pane_contexts(state: AppState):

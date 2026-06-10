@@ -161,8 +161,17 @@ class FakeClient:
         *,
         enter: bool = True,
         dry_run: bool = True,
+        confirm_risky: bool = False,
     ) -> dict:
-        self.fanouts.append({"targets": targets, "text": text, "enter": enter, "dry_run": dry_run})
+        self.fanouts.append(
+            {
+                "targets": targets,
+                "text": text,
+                "enter": enter,
+                "dry_run": dry_run,
+                "confirm_risky": confirm_risky,
+            }
+        )
         pane_ids: list[str]
         selector = targets[0] if targets else ""
         if selector == "all":
@@ -177,11 +186,16 @@ class FakeClient:
             pane_ids = [selector.removeprefix("pane:")]
         else:
             pane_ids = []
+        risk = "recursive force remove" if "rm -rf" in text.lower() and len(pane_ids) > 1 else ""
+        if risk and not dry_run and not confirm_risky:
+            raise ValueError("confirm_risky is required")
         return {
             "type": "pane_fanout",
             "dry_run": dry_run,
             "enter": enter,
             "target_count": len(pane_ids),
+            "requires_confirmation": bool(risk),
+            "risk": risk,
             "targets": [
                 {
                     "pane_id": pane_id,
@@ -633,7 +647,28 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(client.fanouts[-1]["targets"], ["tab:t1"])
             self.assertFalse(client.fanouts[-1]["dry_run"])
+            self.assertTrue(client.fanouts[-1]["confirm_risky"])
             self.assertEqual(client.fanouts[-1]["text"], "pytest -q")
+
+    async def test_fanout_picker_warns_on_risky_preview(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(110, 34)) as pilot:
+            await pilot.pause()
+            app._run_named_action("fanout")
+            await pilot.pause()
+            await pilot.click("#fanout-target-1")  # current tab, two panes
+            await pilot.pause()
+
+            from textual.widgets import Input
+
+            app.screen.query_one("#fanout-command", Input).value = "rm -rf build"
+            app.screen.on_input_submitted(self._submit_event("rm -rf build"))
+            await pilot.pause()
+            preview = app.screen.query_one("#fanout-preview").render()
+            text = preview.plain if hasattr(preview, "plain") else str(preview)
+            self.assertIn("risk", text.lower())
+            self.assertIn("recursive force remove", text)
 
     async def test_pane_menu_close(self):
         client = FakeClient()
