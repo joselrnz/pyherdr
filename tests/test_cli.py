@@ -55,6 +55,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("search mode", plain)
         self.assertIn("[ ] repo", plain)
         self.assertIn("pyherdr-demo", plain)
+        self.assertEqual(plain.count("[ ] repo"), 1)
+        self.assertEqual(plain.count("[ ] dir"), 1)
 
     def test_workflow_graph_accepts_svg_output(self):
         args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])

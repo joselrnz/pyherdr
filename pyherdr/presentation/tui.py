@@ -17,6 +17,7 @@ from config (Ocean Blue by default).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -1280,6 +1281,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._active_row = 0
         self._selected_paths: set[str] = set()
         self._query = ""
+        self._populate_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
@@ -1294,6 +1296,10 @@ class DirPickerScreen(ModalScreen[None]):
         await self._populate("")
 
     async def _populate(self, query: str | None = None) -> None:
+        async with self._populate_lock:
+            await self._populate_locked(query)
+
+    async def _populate_locked(self, query: str | None = None) -> None:
         subdirs = self._subdirs()
         self.query_one("#dir-path", Static).update(self._path_summary(subdirs))
         listing = self.query_one("#dir-list", VerticalScroll)
