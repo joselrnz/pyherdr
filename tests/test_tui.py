@@ -360,15 +360,39 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, WorkflowScreen)
             body = app.screen._render_body().plain
-            self.assertIn("terminal DAG", body)
+            self.assertIn("terminal call graph", body)
             self.assertIn("┌", body)
-            self.assertIn("───▶", body)
+            self.assertIn("──→", body)
             self.assertIn("api.request", body)
             self.assertIn("server", body)
             self.assertIn("pane read", body)
             self.assertIn("Mermaid source", body)
             self.assertIn("flowchart TD", body)
             self.assertIn("WS-121", body)
+
+    def test_workflow_terminal_graph_centers_arrows_and_marks_cycles(self):
+        request = new_event(
+            "api.request",
+            message="pane read",
+            source="tui",
+            target="server",
+            status="done",
+        )
+        response = new_event(
+            "api.response",
+            message="pane data returned",
+            source="server",
+            target="tui",
+            status="done",
+        )
+
+        request_rows = WorkflowScreen._call_graph_event_rows(request)
+        response_rows = WorkflowScreen._call_graph_event_rows(response)
+
+        self.assertNotIn("──→", request_rows[1])
+        self.assertIn("──→", request_rows[2])
+        self.assertIn("response/cycle back", "\n".join(response_rows))
+        self.assertIn("←", "\n".join(response_rows))
 
     async def test_prefix_then_g_navigator_jumps(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)

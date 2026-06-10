@@ -35,7 +35,7 @@ reattach without losing a session.
 - **Agent status** — working / blocked / done / idle rollups from rendered/read
   pane output and explicit reports, surfaced in the sidebar and tab bar.
 - **Workflow audit log** — record events, inspect recent workflow details, and
-  inspect a terminal DAG, plus export JSON, Mermaid source, or a rendered SVG graph.
+  inspect a cycle-aware terminal call graph, plus export JSON, Mermaid source, or a rendered SVG graph.
 - **📊 Resource monitor** — right-click a pane or workspace → *resource usage*,
   or open *Resource monitor* — a live task-manager of CPU% + RAM per process,
   biggest-first, for one pane, a whole workspace, or every session.
@@ -145,14 +145,14 @@ pyherdr pane send-text 1-1 "print('hi')\n"
 pyherdr pane get 1-1                    # pane metadata incl. command + agent status
 pyherdr workflow event validation.ok --worksite WS-121 --message "tests passed"
 pyherdr workflow graph --format mermaid  # workflow/call-flow graph export
-pyherdr workflow graph --format svg --output workflow.svg  # browser-quality DAG diagram
+pyherdr workflow graph --format svg --output workflow.svg  # browser-quality call graph
 pyherdr schedule add --cron "*/5 * * * *" --pane 1-1 git fetch
 pyherdr server stop
 ```
 
-The TUI workflow view shows a compact terminal DAG. Mermaid output is source
-text for Mermaid-compatible renderers. For a browser-quality diagram, export SVG
-and open it in a browser.
+The TUI workflow view shows a compact terminal call graph with response/cycle
+markers. Mermaid output is source text for Mermaid-compatible renderers. For a
+browser-quality diagram, export SVG and open it in a browser.
 
 ## 🗂️ Configuration & state
 

@@ -453,7 +453,7 @@ class WorkflowScreen(ModalScreen[None]):
                 Static(self._render_body(), id="workflow-body"),
                 id="workflow-scroll",
             )
-            yield Static("esc to close · terminal DAG + event log + Mermaid source", id="workflow-foot")
+            yield Static("esc to close · terminal call graph + event log + Mermaid source", id="workflow-foot")
 
     def on_mount(self) -> None:
         self.query_one("#workflow-box", Vertical).border_title = "workflow graph + log"
@@ -463,7 +463,7 @@ class WorkflowScreen(ModalScreen[None]):
         text = Text()
         events = self._events[-40:]
         if not events:
-            text.append("terminal DAG\n", style=f"bold {palette.accent}")
+            text.append("terminal call graph\n", style=f"bold {palette.accent}")
             text.append("(no events yet)\n", style=palette.subtext0)
             text.append("\nrecent events\n", style=f"bold {palette.accent}")
             text.append("No workflow events recorded yet.\n", style=palette.subtext0)
@@ -475,7 +475,7 @@ class WorkflowScreen(ModalScreen[None]):
             text.append("flowchart TD\n", style=palette.subtext0)
             return text
 
-        text.append("terminal DAG\n", style=f"bold {palette.accent}")
+        text.append("terminal call graph\n", style=f"bold {palette.accent}")
         self._append_visual_graph(text, events)
 
         text.append("\nrecent events\n", style=f"bold {palette.accent}")
@@ -507,6 +507,11 @@ class WorkflowScreen(ModalScreen[None]):
 
     def _append_visual_graph(self, text: Text, events: list[WorkflowEvent]) -> None:
         recent = events[-12:]
+        if len(events) > len(recent):
+            text.append(
+                f"showing recent {len(recent)} of {len(events)} events; export SVG for the full graph\n",
+                style=self._palette.overlay0,
+            )
         grouped: dict[str, list[WorkflowEvent]] = {}
         for event in recent:
             grouped.setdefault(event.worksite or "unassigned", []).append(event)
@@ -514,7 +519,7 @@ class WorkflowScreen(ModalScreen[None]):
         for worksite, group in grouped.items():
             text.append(f"{worksite}\n", style=f"bold {self._palette.blue}")
             for event in group:
-                for line in self._dag_event_rows(event):
+                for line in self._call_graph_event_rows(event):
                     text.append("  " + line + "\n", style=self._palette.subtext0)
                 context = self._event_context(event)
                 if context:
@@ -522,7 +527,7 @@ class WorkflowScreen(ModalScreen[None]):
                 text.append("\n")
 
     @classmethod
-    def _dag_event_rows(cls, event: WorkflowEvent) -> list[str]:
+    def _call_graph_event_rows(cls, event: WorkflowEvent) -> list[str]:
         source = event.source or event.agent or event.pane_id or "event"
         target = event.target or "result"
         status = event.status or event.kind
@@ -533,9 +538,13 @@ class WorkflowScreen(ModalScreen[None]):
             cls._node_box("status", status, 14),
         ]
         rows: list[str] = []
+        connector = "  ──→  "
+        spacer = " " * len(connector)
         for index in range(len(boxes[0])):
-            connector = "───▶" if index == 1 else "    "
-            rows.append(connector.join(box[index] for box in boxes))
+            joiner = connector if index == 2 else spacer
+            rows.append(joiner.join(box[index] for box in boxes))
+        if cls._is_response_event(event):
+            rows.append(cls._cycle_back_row(boxes, len(connector)))
         return rows
 
     @classmethod
@@ -554,6 +563,35 @@ class WorkflowScreen(ModalScreen[None]):
         if len(normalized) > width:
             normalized = normalized[: max(0, width - 1)].rstrip() + "…"
         return normalized.ljust(width)
+
+    @classmethod
+    def _cycle_back_row(cls, boxes: list[list[str]], connector_width: int) -> str:
+        source_mid = len(boxes[0][0]) // 2
+        target_mid = (
+            len(boxes[0][0])
+            + connector_width
+            + len(boxes[1][0])
+            + connector_width
+            + len(boxes[2][0]) // 2
+        )
+        inner_width = max(0, target_mid - source_mid - 1)
+        label = " response/cycle back ← "
+        if inner_width <= len(label):
+            inner = label
+        else:
+            left = (inner_width - len(label)) // 2
+            right = inner_width - len(label) - left
+            inner = "─" * left + label + "─" * right
+        return " " * source_mid + "╰" + inner + "╯"
+
+    @staticmethod
+    def _is_response_event(event: WorkflowEvent) -> bool:
+        detail_keys = " ".join(str(key) for key in event.details)
+        marker_text = f"{event.kind} {event.status} {event.message} {detail_keys}".lower()
+        return any(
+            marker in marker_text
+            for marker in ("response", "reply", "return", "result", "ack", "callback")
+        )
 
     def _status_color(self, status: str) -> str:
         lowered = status.lower()

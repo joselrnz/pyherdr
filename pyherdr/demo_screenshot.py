@@ -151,6 +151,18 @@ DEMO_WORKFLOW_EVENTS = [
         timestamp=1_786_240_800.0,
     ),
     new_event(
+        "api.response",
+        message="pane data returned",
+        source="server",
+        target="tui",
+        worksite="WS-121",
+        agent="codex",
+        pane_id="pane-loop",
+        status="done",
+        event_id="demo-workflow-1b",
+        timestamp=1_786_240_830.0,
+    ),
+    new_event(
         "agent.status",
         message="approval gate blocked",
         source="claude",
