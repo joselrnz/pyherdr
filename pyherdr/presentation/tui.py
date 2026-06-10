@@ -453,7 +453,7 @@ class WorkflowScreen(ModalScreen[None]):
                 Static(self._render_body(), id="workflow-body"),
                 id="workflow-scroll",
             )
-            yield Static("esc to close · visual graph + event log + Mermaid source", id="workflow-foot")
+            yield Static("esc to close · terminal DAG + event log + Mermaid source", id="workflow-foot")
 
     def on_mount(self) -> None:
         self.query_one("#workflow-box", Vertical).border_title = "workflow graph + log"
@@ -463,7 +463,7 @@ class WorkflowScreen(ModalScreen[None]):
         text = Text()
         events = self._events[-40:]
         if not events:
-            text.append("visual graph\n", style=f"bold {palette.accent}")
+            text.append("terminal DAG\n", style=f"bold {palette.accent}")
             text.append("(no events yet)\n", style=palette.subtext0)
             text.append("\nrecent events\n", style=f"bold {palette.accent}")
             text.append("No workflow events recorded yet.\n", style=palette.subtext0)
@@ -475,7 +475,7 @@ class WorkflowScreen(ModalScreen[None]):
             text.append("flowchart TD\n", style=palette.subtext0)
             return text
 
-        text.append("visual graph\n", style=f"bold {palette.accent}")
+        text.append("terminal DAG\n", style=f"bold {palette.accent}")
         self._append_visual_graph(text, events)
 
         text.append("\nrecent events\n", style=f"bold {palette.accent}")
@@ -514,23 +514,46 @@ class WorkflowScreen(ModalScreen[None]):
         for worksite, group in grouped.items():
             text.append(f"{worksite}\n", style=f"bold {self._palette.blue}")
             for event in group:
-                source = event.source or event.agent or event.pane_id or "event"
-                target = event.target or event.status or "result"
-                status = event.status or event.kind
-                text.append("  ")
-                text.append(source, style=self._palette.teal)
-                text.append(" -> ", style=self._palette.overlay0)
-                text.append(event.kind, style=f"bold {self._palette.text}")
-                text.append(" -> ", style=self._palette.overlay0)
-                text.append(target, style=self._palette.teal)
-                text.append("  [", style=self._palette.overlay0)
-                text.append(status, style=self._status_color(status))
-                text.append("]\n", style=self._palette.overlay0)
-                if event.message:
-                    text.append(f"      {event.message}\n", style=self._palette.text)
+                for line in self._dag_event_rows(event):
+                    text.append("  " + line + "\n", style=self._palette.subtext0)
                 context = self._event_context(event)
                 if context:
                     text.append(f"      {context}\n", style=self._palette.overlay0)
+                text.append("\n")
+
+    @classmethod
+    def _dag_event_rows(cls, event: WorkflowEvent) -> list[str]:
+        source = event.source or event.agent or event.pane_id or "event"
+        target = event.target or "result"
+        status = event.status or event.kind
+        boxes = [
+            cls._node_box("source", source, 16),
+            cls._node_box(event.kind, event.message or "event", 24),
+            cls._node_box("target", target, 16),
+            cls._node_box("status", status, 14),
+        ]
+        rows: list[str] = []
+        for index in range(len(boxes[0])):
+            connector = "───▶" if index == 1 else "    "
+            rows.append(connector.join(box[index] for box in boxes))
+        return rows
+
+    @classmethod
+    def _node_box(cls, title: str, value: str, width: int) -> list[str]:
+        content_width = width - 2
+        return [
+            "┌" + "─" * content_width + "┐",
+            "│" + cls._fit_node_text(title, content_width) + "│",
+            "│" + cls._fit_node_text(value, content_width) + "│",
+            "└" + "─" * content_width + "┘",
+        ]
+
+    @staticmethod
+    def _fit_node_text(value: str, width: int) -> str:
+        normalized = " ".join(str(value).split()) or "(empty)"
+        if len(normalized) > width:
+            normalized = normalized[: max(0, width - 1)].rstrip() + "…"
+        return normalized.ljust(width)
 
     def _status_color(self, status: str) -> str:
         lowered = status.lower()
