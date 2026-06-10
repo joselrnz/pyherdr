@@ -154,7 +154,7 @@ or workspace rows for context menus (including *resource usage*). The bottom **a
 buttons for help, palette, new tab, split, terminal, stats, theme, detach, quit.
 The new-workspace folder picker starts from the active workspace and includes
 quick jumps for the workspace root, recent roots, git repo root, process cwd,
-and home. The current folder is shown in a boxed card beside an `Open Current`
+and home. The current folder is shown in a boxed card beside an `Open Folder`
 action so the target is explicit. Typing in the picker filters child folders and quick roots;
 pressing Enter on a real path jumps there. The input also accepts safe explorer
 commands: `ls` refreshes, `ls text` filters, `cd path` changes folder, `pwd`

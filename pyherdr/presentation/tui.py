@@ -1259,7 +1259,7 @@ class DirPickerScreen(ModalScreen[None]):
     #dir-path {
         width: 1fr;
         height: 3;
-        color: $ph-subtext0;
+        color: $ph-text;
         padding: 0 1;
     }
     .dir-current-open {
@@ -1319,7 +1319,7 @@ class DirPickerScreen(ModalScreen[None]):
             with Horizontal(id="dir-current"):
                 with Horizontal(id="dir-current-card"):
                     yield Static("", id="dir-path")
-                    yield Clickable("Open Current", "dir_open", classes="dir-current-open", id="dir-open-current")
+                    yield Clickable("Open Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
             yield VerticalScroll(id="dir-list")
             yield Static("click a folder to enter  ·  open current path  ·  esc cancel", id="dir-foot")
 
@@ -1411,7 +1411,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._update_footer("search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel")
 
     def _update_browse_footer(self) -> None:
-        self._update_footer("ls/cd/pwd/open commands · ctrl+f search roots · alt+o open current · esc cancel")
+        self._update_footer("ls/cd/pwd/open commands · ctrl+f search roots · alt+o open folder · esc cancel")
 
     def _update_footer(self, help_text: str) -> None:
         text = help_text
@@ -1420,8 +1420,8 @@ class DirPickerScreen(ModalScreen[None]):
         self.query_one("#dir-foot", Static).update(text)
 
     def _path_summary(self, subdirs: list[str]) -> Text:
-        text = Text("CURRENT FOLDER\n")
-        text.append(self._cwd.replace("\\", "/"))
+        text = Text("CURRENT FOLDER:\n", style="dim")
+        text.append(self._cwd.replace("\\", "/"), style="bold")
         facts = [self._folder_count_text(len(subdirs))]
         metadata = self._repo_metadata()
         if metadata.repo_root:
@@ -1434,7 +1434,7 @@ class DirPickerScreen(ModalScreen[None]):
             elif metadata.branch == "HEAD":
                 facts.append("detached HEAD")
             facts.append("dirty" if metadata.dirty else "clean")
-        text.append("\n" + " · ".join(facts))
+        text.append("\n" + " · ".join(facts), style="dim")
         return text
 
     def _repo_metadata(self) -> DirRepoMetadata:
