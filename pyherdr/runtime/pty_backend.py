@@ -171,7 +171,7 @@ class _WindowsPtyProcess(PtyProcess):
     def read(self, size: int = 4096) -> str | None:
         try:
             return self._proc.read(size)
-        except EOFError:
+        except (EOFError, OSError):
             return None
 
     def resize(self, rows: int, cols: int) -> None:
@@ -182,7 +182,7 @@ class _WindowsPtyProcess(PtyProcess):
 
     def terminate(self, force: bool = False) -> None:
         try:
-            self._proc.terminate(force=force)
+            self._proc.close(force=force)
         except Exception:
             pass
 

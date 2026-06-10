@@ -49,12 +49,16 @@ def main(argv: list[str] | None = None) -> int:
         tui_main()
         return 0
 
+    if args.command == "demo-screenshot":
+        return run_demo_screenshot(args)
     if args.command == "status":
         return print_status()
     if args.command == "session":
         return run_session(args)
     if args.command == "notification":
         return run_notification(args)
+    if args.command == "workflow":
+        return run_workflow(args)
     if args.command == "schedule":
         return run_schedule(args)
     if args.command == "server":
@@ -84,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("dashboard", help="launch desktop dashboard")
     sub.add_parser("tui", help="launch the live terminal UI (Textual)")
+    demo_screenshot = sub.add_parser("demo-screenshot", help="render the Textual TUI with deterministic demo data")
+    demo_screenshot.add_argument("--output", default="pyherdr-demo.svg", help="SVG file to write")
+    demo_screenshot.add_argument("--width", type=int, default=132, help="terminal columns")
+    demo_screenshot.add_argument("--height", type=int, default=38, help="terminal rows")
     sub.add_parser("version", help="print version")
     sub.add_parser("status", help="show Python server and saved session status")
 
@@ -108,6 +116,30 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["top-left", "top-right", "bottom-left", "bottom-right"],
     )
     notification_show.add_argument("--sound", default="none", choices=["none", "done", "request"])
+
+    workflow = sub.add_parser("workflow", help="workflow graph and audit-log commands")
+    workflow_sub = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_event = workflow_sub.add_parser("event", help="append one workflow event")
+    workflow_event.add_argument("kind")
+    workflow_event.add_argument("--message", default="")
+    workflow_event.add_argument("--source", default="")
+    workflow_event.add_argument("--target", default="")
+    workflow_event.add_argument("--worksite", default="")
+    workflow_event.add_argument("--agent", default="")
+    workflow_event.add_argument("--pane-id", default="")
+    workflow_event.add_argument("--status", default="")
+    workflow_event.add_argument("--artifact", action="append", default=[])
+    workflow_event.add_argument(
+        "--detail",
+        action="append",
+        default=[],
+        help="key=value metadata; sensitive values are redacted",
+    )
+    workflow_log = workflow_sub.add_parser("log", help="print recent workflow events as JSON")
+    workflow_log.add_argument("--limit", type=int, default=50)
+    workflow_graph = workflow_sub.add_parser("graph", help="print workflow graph")
+    workflow_graph.add_argument("--limit", type=int, default=100)
+    workflow_graph.add_argument("--format", choices=["json", "mermaid"], default="json")
 
     schedule = sub.add_parser("schedule", help="cron-scheduled pane commands")
     schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
@@ -293,6 +325,14 @@ def print_status() -> int:
     return 0
 
 
+def run_demo_screenshot(args) -> int:
+    from .demo_screenshot import render_demo_screenshot
+
+    output = render_demo_screenshot(Path(args.output), width=args.width, height=args.height)
+    print(output)
+    return 0
+
+
 def run_schedule(args) -> int:
     if args.schedule_command == "add":
         response = ensure_request(
@@ -331,6 +371,46 @@ def run_notification(args) -> int:
         }
     )
     return print_response(response)
+
+
+def run_workflow(args) -> int:
+    from .workflow import append_event, build_graph, event_to_dict, graph_to_mermaid, new_event, read_events
+
+    if args.workflow_command == "event":
+        details: dict[str, str] = {}
+        for item in args.detail:
+            if "=" not in item:
+                print(f"invalid detail {item!r}; expected key=value", file=sys.stderr)
+                return 2
+            key, value = item.split("=", 1)
+            details[key] = value
+        event = new_event(
+            args.kind,
+            message=args.message,
+            source=args.source,
+            target=args.target,
+            worksite=args.worksite,
+            agent=args.agent,
+            pane_id=args.pane_id,
+            status=args.status,
+            details=details,
+            artifacts=args.artifact,
+        )
+        append_event(event)
+        print(json.dumps({"event": event_to_dict(event)}, indent=2))
+        return 0
+    if args.workflow_command == "log":
+        events = read_events(limit=args.limit)
+        print(json.dumps({"events": [event_to_dict(event) for event in events]}, indent=2))
+        return 0
+    if args.workflow_command == "graph":
+        graph = build_graph(read_events(limit=args.limit))
+        if args.format == "mermaid":
+            print(graph_to_mermaid(graph))
+        else:
+            print(json.dumps(graph, indent=2))
+        return 0
+    return 2
 
 
 def run_session(args) -> int:

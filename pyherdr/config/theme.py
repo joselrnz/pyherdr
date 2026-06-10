@@ -1,7 +1,7 @@
 """Theme palette and color parsing (ported from herdr src/config/theme.rs).
 
-Catppuccin Mocha is the default, matching herdr. Built-in themes provide canonical
-palettes; `ThemeConfig` selects one and applies per-token custom overrides.
+Ocean Blue is PyHerdr's default. Built-in themes provide canonical palettes;
+`ThemeConfig` selects one and applies per-token custom overrides.
 """
 
 from __future__ import annotations
@@ -204,8 +204,28 @@ VESPER = Palette(
     green="#99ffe4", yellow="#ffc799", red="#ff8080", blue="#a0a0a0", teal="#66ddcc", peach="#ffc799",
 )
 
+OCEAN_BLUE = Palette(
+    accent="#38bdf8",
+    panel_bg="#071824",
+    surface0="#0b2635",
+    surface1="#12384a",
+    surface_dim="#04111a",
+    overlay0="#4f7186",
+    overlay1="#6f94aa",
+    text="#d8f3ff",
+    subtext0="#95b9cc",
+    mauve="#b4a7ff",
+    green="#64d28b",
+    yellow="#ffd166",
+    red="#ff6b8a",
+    blue="#5abfff",
+    teal="#2dd4bf",
+    peach="#ffb86b",
+)
+
 # Display order for the theme picker (canonical names).
 THEME_NAMES: list[str] = [
+    "ocean-blue",
     "catppuccin",
     "catppuccin-latte",
     "tokyo-night",
@@ -225,6 +245,9 @@ THEME_NAMES: list[str] = [
 ]
 
 BUILTIN_THEMES: dict[str, Palette] = {
+    "ocean-blue": OCEAN_BLUE,
+    "ocean": OCEAN_BLUE,
+    "ghostty-ocean": OCEAN_BLUE,
     "catppuccin": CATPPUCCIN_MOCHA,
     "catppuccin-mocha": CATPPUCCIN_MOCHA,
     "mocha": CATPPUCCIN_MOCHA,
@@ -254,7 +277,7 @@ BUILTIN_THEMES: dict[str, Palette] = {
     "vesper": VESPER,
 }
 
-DEFAULT_THEME = "catppuccin"
+DEFAULT_THEME = "ocean-blue"
 
 
 class CustomThemeColors(BaseModel):
@@ -290,7 +313,7 @@ class ThemeConfig(BaseModel):
 
     def resolve(self) -> Palette:
         """Resolve to a concrete `Palette` (base theme + overrides)."""
-        base = BUILTIN_THEMES.get((self.name or DEFAULT_THEME).strip().lower(), CATPPUCCIN_MOCHA)
+        base = BUILTIN_THEMES.get((self.name or DEFAULT_THEME).strip().lower(), OCEAN_BLUE)
         if self.custom is None:
             return base
         overrides = {

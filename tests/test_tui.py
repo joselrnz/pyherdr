@@ -318,9 +318,25 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertTrue(app._has_working_agent())
             text = app._agents_text().plain
-            self.assertIn("claude·a", text)
+            self.assertIn("claude · a", text)
+            self.assertIn("main › shell", text)
             # the working agent's glyph is a braille spinner frame, not a static dot
             self.assertTrue(any(frame in text for frame in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"))
+
+    async def test_sidebar_shows_attention_workspace_and_workflow_summaries(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            attention = app._attention_text().plain
+            self.assertIn("working 1", attention)
+            self.assertIn("agents 1  panes 3", attention)
+            row = app._workspace_row_text(1, STATE["workspaces"][0], True).plain
+            self.assertIn("1 ● main", row)
+            self.assertIn("2 tabs", row)
+            self.assertIn("working 1", row)
+            workflow = app._workflow_text().plain
+            self.assertIn("workflow", workflow)
+            self.assertIn("calls  logs  graph", workflow)
 
     async def test_prefix_then_g_navigator_jumps(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)

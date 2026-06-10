@@ -22,6 +22,7 @@ from .platform_support import hidden_process_creation_flags
 from .runtime import TerminalManager
 from .session import session_runtime_dir
 from .store import default_state_path, load_state, save_state
+from .workflow import append_event, new_event
 
 
 def _configured_pane_env() -> dict[str, str]:
@@ -83,7 +84,8 @@ class PyHerdrServer(ThreadingTCPServer):
 class RequestHandler(BaseRequestHandler):
     def handle(self) -> None:
         self.request.settimeout(10.0)
-        raw = self.request.makefile("r", encoding="utf-8").readline()
+        with self.request.makefile("r", encoding="utf-8") as reader:
+            raw = reader.readline()
         if not raw:
             return
         try:
@@ -103,14 +105,39 @@ class RequestHandler(BaseRequestHandler):
 
         token = str(request.pop("token", ""))
         if not hmac.compare_digest(token, server.token):
+            _record_workflow_event(
+                "api.unauthorized",
+                message=str(request.get("method") or "request"),
+                source="server",
+                target=str(request.get("method") or ""),
+                status="error",
+                details={"id": request_id, "reason": "invalid or missing auth token"},
+            )
             self._write(
                 {"id": request_id, "error": {"code": "unauthorized", "message": "invalid or missing auth token"}}
             )
             return
 
+        method = str(request.get("method") or "")
+        _record_workflow_event(
+            "api.request",
+            message=method or "request",
+            source="client",
+            target=method,
+            details={"id": request_id, "params": request.get("params", {})},
+        )
+
         if request.get("method") == "server.stop":
             response = {"id": request_id, "result": {"type": "server_stop"}}
             self._write(response)
+            _record_workflow_event(
+                "api.response",
+                message="server.stop",
+                source="server",
+                target="server.stop",
+                status="ok",
+                details={"id": request_id},
+            )
             server.should_stop.set()
             threading.Thread(target=server.shutdown, daemon=True).start()
             return
@@ -119,6 +146,14 @@ class RequestHandler(BaseRequestHandler):
             response = dispatch(server.state, request, server.processes)
             if "error" not in response and mutates_state(str(request.get("method") or "")):
                 save_state(server.state, server.state_path)
+        _record_workflow_event(
+            "api.response",
+            message=method or "response",
+            source="server",
+            target=method,
+            status="error" if "error" in response else "ok",
+            details={"id": request_id, "error": response.get("error")},
+        )
         self._write(response)
 
     def _write(self, payload: dict[str, Any]) -> None:
@@ -139,6 +174,32 @@ def server_info_path() -> Path:
 
 def server_log_path() -> Path:
     return runtime_dir() / "server.log"
+
+
+def _record_workflow_event(
+    kind: str,
+    *,
+    message: str = "",
+    source: str = "",
+    target: str = "",
+    status: str = "",
+    details: dict[str, Any] | None = None,
+) -> None:
+    try:
+        append_event(
+            new_event(
+                kind,
+                message=message,
+                source=source,
+                target=target,
+                status=status,
+                details=details or {},
+            ),
+            max_events=2000,
+        )
+    except Exception:
+        # Workflow logging must never break the API path.
+        pass
 
 
 def read_server_info(path: Path | None = None) -> ServerInfo | None:
@@ -241,7 +302,8 @@ def request(info: ServerInfo, payload: dict[str, Any], timeout: float = 2.0) -> 
     message = {**payload, "token": info.token}
     with socket.create_connection((info.host, info.port), timeout=timeout) as sock:
         sock.sendall(json.dumps(message).encode("utf-8") + b"\n")
-        response = sock.makefile("r", encoding="utf-8").readline()
+        with sock.makefile("r", encoding="utf-8") as reader:
+            response = reader.readline()
     if not response:
         raise ConnectionError("server closed connection without a response")
     return json.loads(response)

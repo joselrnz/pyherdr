@@ -12,7 +12,7 @@ Two ways to drive it:
 
 Layout: a clickable tab bar, a sidebar (workspaces + shell buttons + agents),
 the focused tab's panes side-by-side, a hint line, and a status bar. Theme comes
-from config (Catppuccin Mocha by default).
+from config (Ocean Blue by default).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from ..config import load_config
-from ..config.theme import BUILTIN_THEMES, THEME_NAMES, Palette
+from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from .client import PaneClient, ServerClient
 
@@ -977,7 +977,7 @@ class PyHerdrTui(App):
         # calls get_css_variables(), which reads self._palette.
         config = load_config()
         self._palette: Palette = config.theme.resolve()
-        self._theme_name = (config.theme.name or "catppuccin").strip()
+        self._theme_name = (config.theme.name or DEFAULT_THEME).strip()
         # Keybindings: custom prefix, action→key overrides, and user commands.
         self._prefix_key = (config.keys.prefix or "ctrl+b").strip()
         self._prefix_actions = dict(_DEFAULT_PREFIX_ACTIONS)
@@ -1032,20 +1032,23 @@ class PyHerdrTui(App):
     .tabplus:hover { background: $ph-surface0; color: $ph-text; }
     #body { height: 1fr; }
     #nav {
-        width: 26;
+        width: 32;
         height: 1fr;
         background: $ph-mantle;
         border: round $ph-overlay0;
         border-title-color: $ph-accent;
         padding: 0 1;
     }
-    .wsrow { width: 1fr; height: auto; }
+    .attention { width: 1fr; padding: 0 0 1 0; }
+    .wsrow { width: 1fr; height: auto; padding: 0 0 1 0; }
     .wsrow:hover { background: $ph-surface0; }
+    .wsrow.active { background: $ph-surface0; }
     .navhdr { width: 1fr; color: $ph-subtext0; padding: 1 0 0 0; }
     .navtop { width: 1fr; color: $ph-subtext0; }
     .navgap { width: 1fr; height: 1; }
     .newterm { width: 1fr; color: $ph-blue; }
     .newterm:hover { background: $ph-surface0; text-style: bold; }
+    .workflow { width: 1fr; padding: 1 0 0 0; }
     .agents { width: 1fr; padding: 1 0 0 0; }
     #panes { height: 1fr; width: 1fr; }
     PaneView {
@@ -1879,44 +1882,129 @@ class PyHerdrTui(App):
     async def _refresh_sidebar(self) -> None:
         nav = self.query_one("#nav", Vertical)
         await nav.remove_children()
-        widgets: list[Static] = [Static(Text("spaces", style=self._palette.subtext0), classes="navtop")]
+        widgets: list[Static] = [
+            Static(self._attention_text(), id="attention", classes="attention"),
+            Static(Text("spaces", style=self._palette.subtext0), classes="navtop"),
+        ]
         for index, workspace in enumerate(self._workspaces(), start=1):
             ws_id = str(workspace.get("id"))
-            statuses = [str(p.get("status", "unknown")) for t in workspace.get("tabs", []) for p in t.get("panes", [])]
-            glyph, color = self._dot(_rollup(statuses))
             active = ws_id == self._workspace_id
-            row = Text()
-            row.append(f"{index} ", style=self._palette.overlay0)
-            row.append(f"{glyph} ", style=color)
-            label_style = f"bold {self._palette.accent}" if active else self._palette.text
-            row.append(str(workspace.get("label", "ws")), style=label_style)
-            branch = self._branches.get(ws_id, "")
-            if branch:
-                row.append(f"\n   {branch}", style=self._palette.overlay0)
-                ahead, behind = self._ahead_behind.get(ws_id, (0, 0))
-                if ahead:
-                    row.append(f" ↑{ahead}", style=self._palette.green)
-                if behind:
-                    row.append(f" ↓{behind}", style=self._palette.red)
             widgets.append(
                 Clickable(
-                    row,
+                    self._workspace_row_text(index, workspace, active),
                     "switch_workspace",
                     ws_id,
                     ctx_action="ctx_workspace",
                     id=f"wsrow-{ws_id}",
-                    classes="wsrow",
+                    classes="wsrow active" if active else "wsrow",
                 )
             )
         widgets.append(Static("", classes="navgap"))
         widgets.append(Clickable("＋ workspace", "new_workspace", id="newws", classes="newterm"))
         widgets.append(Clickable("＋ new terminal ▾", "open_shell_picker", id="newterm", classes="newterm"))
+        widgets.append(Static(self._workflow_text(), id="workflow", classes="workflow"))
         widgets.append(Static(self._agents_text(), id="agents", classes="agents"))
         await nav.mount(*widgets)
 
+    @staticmethod
+    def _workspace_panes(workspace: dict[str, Any]) -> list[dict[str, Any]]:
+        panes: list[dict[str, Any]] = []
+        for tab in workspace.get("tabs", []):
+            if not isinstance(tab, dict):
+                continue
+            for pane in tab.get("panes", []):
+                if isinstance(pane, dict):
+                    panes.append(pane)
+        return panes
+
+    def _all_panes(self) -> list[dict[str, Any]]:
+        panes: list[dict[str, Any]] = []
+        for workspace in self._workspaces():
+            panes.extend(self._workspace_panes(workspace))
+        return panes
+
+    @staticmethod
+    def _status_counts(panes: list[dict[str, Any]]) -> dict[str, int]:
+        counts = {status: 0 for status in _STATUS_PRIORITY}
+        for pane in panes:
+            status = str(pane.get("status", "unknown"))
+            if status not in counts:
+                status = "unknown"
+            counts[status] += 1
+        return counts
+
+    def _append_status_count(self, text: Text, label: str, count: int, color: str) -> None:
+        if count:
+            text.append(f"{label} {count}", style=color)
+            text.append("  ", style=self._palette.overlay0)
+
+    def _attention_text(self) -> Text:
+        panes = self._all_panes()
+        counts = self._status_counts(panes)
+        agents = sum(1 for pane in panes if pane.get("agent"))
+        text = Text("attention", style=self._palette.subtext0)
+        text.append("\n")
+        if any(counts[status] for status in ("blocked", "working", "done")):
+            self._append_status_count(text, "blocked", counts["blocked"], self._palette.red)
+            self._append_status_count(text, "working", counts["working"], self._palette.yellow)
+            self._append_status_count(text, "done", counts["done"], self._palette.green)
+        else:
+            text.append("all quiet", style=self._palette.green)
+        text.append("\n")
+        text.append(f"agents {agents}  panes {len(panes)}", style=self._palette.overlay0)
+        return text
+
+    def _workspace_row_text(self, index: int, workspace: dict[str, Any], active: bool) -> Text:
+        ws_id = str(workspace.get("id"))
+        panes = self._workspace_panes(workspace)
+        counts = self._status_counts(panes)
+        glyph, color = self._dot(_rollup([str(pane.get("status", "unknown")) for pane in panes]))
+        branch = self._branches.get(ws_id, "")
+        tabs = workspace.get("tabs", [])
+        tab_count = len(tabs) if isinstance(tabs, list) else 0
+        row = Text()
+        row.append("▌" if active else " ", style=self._palette.accent if active else self._palette.overlay0)
+        row.append(f" {index} ", style=self._palette.overlay0)
+        row.append(f"{glyph} ", style=color)
+        label_style = f"bold {self._palette.accent}" if active else self._palette.text
+        row.append(str(workspace.get("label", "ws")), style=label_style)
+        row.append("\n  ", style=self._palette.overlay0)
+        if branch:
+            row.append(branch, style=self._palette.overlay0)
+        else:
+            cwd = str(workspace.get("cwd", ".")).replace("\\", "/")
+            row.append(cwd[-14:], style=self._palette.overlay0)
+        ahead, behind = self._ahead_behind.get(ws_id, (0, 0))
+        if ahead:
+            row.append(f" ↑{ahead}", style=self._palette.green)
+        if behind:
+            row.append(f" ↓{behind}", style=self._palette.red)
+        row.append(f" · {tab_count} tabs", style=self._palette.overlay0)
+        row.append(" · ", style=self._palette.overlay0)
+        if counts["blocked"]:
+            row.append(f"blocked {counts['blocked']}", style=self._palette.red)
+        elif counts["working"]:
+            row.append(f"working {counts['working']}", style=self._palette.yellow)
+        elif counts["done"]:
+            row.append(f"done {counts['done']}", style=self._palette.green)
+        elif counts["idle"]:
+            row.append(f"idle {counts['idle']}", style=self._palette.overlay0)
+        else:
+            row.append("empty", style=self._palette.overlay0)
+        return row
+
+    def _workflow_text(self) -> Text:
+        text = Text("workflow", style=self._palette.subtext0)
+        text.append("\n◎ calls", style=self._palette.blue)
+        text.append("  logs", style=self._palette.teal)
+        text.append("  graph", style=self._palette.accent)
+        text.append("\n✓ validate every run", style=self._palette.green)
+        return text
+
     def _agents_text(self) -> Text:
         """The 'agents' sidebar section; working agents show an animated spinner."""
-        text = Text("agents", style=self._palette.subtext0)
+        panes = [pane for pane in self._all_panes() if pane.get("agent")]
+        text = Text(f"agents {len(panes)}", style=self._palette.subtext0)
         frame = _SPINNER[self._spin % len(_SPINNER)]
         for workspace in self._workspaces():
             for tab in workspace.get("tabs", []):
@@ -1930,7 +2018,11 @@ class PyHerdrTui(App):
                         glyph, color = self._dot(status)
                     text.append("\n")
                     text.append(f"{glyph} ", style=color)
-                    text.append(f"{pane.get('agent')}·{pane.get('title', 'pane')}", style=self._palette.text)
+                    text.append(f"{pane.get('agent')} · {pane.get('title', 'pane')}", style=self._palette.text)
+                    text.append(
+                        f"\n  {workspace.get('label', 'ws')} › {tab.get('label', 'tab')}",
+                        style=self._palette.overlay0,
+                    )
         return text
 
     def _has_working_agent(self) -> bool:

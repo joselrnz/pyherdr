@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Lint (ruff)
-        run: python -m ruff check pyherdr tests
+        run: python -m ruff check pyherdr tools tests
 
       - name: Type check (mypy)
         run: python -m mypy
