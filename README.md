@@ -211,6 +211,19 @@ browser-quality diagram, export SVG and open it in a browser.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
   and labels only, not the server auth token. Use `pyherdr workspace recents`
   to inspect or prune stale roots.
+- Workspace search can be bounded from config. When `workspace.search_roots` is
+  empty, the picker still falls back to common folders like `~/github` and
+  `~/code`.
+
+```toml
+[workspace]
+search_roots = ["~/github", "~/code", "C:/Users/josel/github"]
+search_ignore = [".git", ".venv", "node_modules", "dist", "build"]
+search_max_depth = 3
+search_max_results = 80
+search_include_hidden = false
+search_cache_ttl_seconds = 300
+```
 
 The `.pyherdr/` folder holds the auth token and is git-ignored — never commit it.
 

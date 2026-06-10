@@ -17,6 +17,21 @@ DEFAULT_MOBILE_WIDTH_THRESHOLD = 64
 DEFAULT_MOUSE_SCROLL_LINES = 3
 DEFAULT_SCROLLBACK_LIMIT_BYTES = 10_000_000
 MAX_TOAST_DELAY_SECONDS = 3600
+DEFAULT_WORKSPACE_SEARCH_IGNORE = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "vendor",
+]
 
 
 class UpdateChannel(StrEnum):
@@ -107,6 +122,15 @@ class WorktreesConfig(_Section):
     directory: str = ""
 
 
+class WorkspaceConfig(_Section):
+    search_roots: list[str] = Field(default_factory=list)
+    search_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_WORKSPACE_SEARCH_IGNORE))
+    search_max_depth: int = 3
+    search_max_results: int = 80
+    search_include_hidden: bool = False
+    search_cache_ttl_seconds: int = 300
+
+
 class UiConfig(_Section):
     sidebar_width: int = 30
     sidebar_min_width: int = 18
@@ -169,6 +193,7 @@ class Config(_Section):
     update: UpdateConfig = UpdateConfig()
     keys: KeysConfig = KeysConfig()
     ui: UiConfig = UiConfig()
+    workspace: WorkspaceConfig = WorkspaceConfig()
     worktrees: WorktreesConfig = WorktreesConfig()
     advanced: AdvancedConfig = AdvancedConfig()
     experimental: ExperimentalConfig = ExperimentalConfig()

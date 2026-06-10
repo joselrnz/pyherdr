@@ -40,7 +40,7 @@ from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents
-from ..workspace_search import ExplorerRow, SearchRoot, search_workspace_rows
+from ..workspace_search import DEFAULT_IGNORE_NAMES, ExplorerRow, SearchRoot, search_workspace_rows
 from .client import PaneClient, ServerClient
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
@@ -296,7 +296,7 @@ class DirBrowseRow:
     widget_id: str | None = None
 
 
-SearchCacheKey = tuple[str, tuple[tuple[str, str, str], ...]]
+SearchCacheKey = tuple[str, tuple[tuple[str, str, str], ...], int, int, bool, tuple[str, ...]]
 
 
 def _help_text(palette: Palette) -> Text:
@@ -1311,6 +1311,11 @@ class DirPickerScreen(ModalScreen[None]):
         quick_paths: list[tuple[str, str]] | None = None,
         search_roots: list[SearchRoot] | None = None,
         search_debounce: float = 0.08,
+        search_max_depth: int = 3,
+        search_max_results: int = 80,
+        search_ignore_names: list[str] | tuple[str, ...] | None = None,
+        search_include_hidden: bool = False,
+        search_cache_ttl_seconds: int = 300,
     ) -> None:
         super().__init__()
         self._cwd = os.path.abspath(start or os.getcwd())
@@ -1324,7 +1329,12 @@ class DirPickerScreen(ModalScreen[None]):
         self._browse_rows: list[DirBrowseRow] = []
         self._active_browse_row = 0
         self._search_rows: list[ExplorerRow] = []
-        self._search_cache: dict[SearchCacheKey, list[ExplorerRow]] = {}
+        self._search_max_depth = max(0, search_max_depth)
+        self._search_max_results = max(1, search_max_results)
+        self._search_ignore_names = tuple(DEFAULT_IGNORE_NAMES if search_ignore_names is None else search_ignore_names)
+        self._search_include_hidden = search_include_hidden
+        self._search_cache_ttl_seconds = max(0, search_cache_ttl_seconds)
+        self._search_cache: dict[SearchCacheKey, tuple[float, list[ExplorerRow]]] = {}
         self._pending_search_key: SearchCacheKey | None = None
         self._search_revision = 0
         self._search_debounce = max(0.0, search_debounce)
@@ -1419,7 +1429,7 @@ class DirPickerScreen(ModalScreen[None]):
             self._update_search_footer()
             return
         cache_key = self._search_cache_key(needle)
-        cached = self._search_cache.get(cache_key)
+        cached = self._cached_search_rows(cache_key)
         if cached is None:
             self._search_rows = []
             await listing.mount(Static(f"  searching roots for {needle}", classes="dir-row"))
@@ -1473,20 +1483,48 @@ class DirPickerScreen(ModalScreen[None]):
         try:
             if self._search_debounce:
                 await asyncio.sleep(self._search_debounce)
-            rows = await asyncio.to_thread(search_workspace_rows, needle, list(self._search_roots))
+            rows = await asyncio.to_thread(
+                search_workspace_rows,
+                needle,
+                list(self._search_roots),
+                max_depth=self._search_max_depth,
+                max_results=self._search_max_results,
+                ignore_names=self._search_ignore_names,
+                include_hidden=self._search_include_hidden,
+            )
         except asyncio.CancelledError:
             if self._pending_search_key == cache_key:
                 self._pending_search_key = None
             raise
-        self._search_cache[cache_key] = rows
+        if self._search_cache_ttl_seconds:
+            self._search_cache[cache_key] = (time.monotonic(), rows)
         if self._pending_search_key == cache_key:
             self._pending_search_key = None
         if revision != self._search_revision or not self._search_mode or self._query.strip().lower() != needle:
             return
         await self._populate()
 
+    def _cached_search_rows(self, cache_key: SearchCacheKey) -> list[ExplorerRow] | None:
+        if not self._search_cache_ttl_seconds:
+            return None
+        cached = self._search_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, rows = cached
+        if time.monotonic() - cached_at > self._search_cache_ttl_seconds:
+            del self._search_cache[cache_key]
+            return None
+        return rows
+
     def _search_cache_key(self, needle: str) -> SearchCacheKey:
-        return (needle, tuple((root.path, root.label, root.source) for root in self._search_roots))
+        return (
+            needle,
+            tuple((root.path, root.label, root.source) for root in self._search_roots),
+            self._search_max_depth,
+            self._search_max_results,
+            self._search_include_hidden,
+            self._search_ignore_names,
+        )
 
     def _search_row_text(self, row: ExplorerRow, index: int) -> Text:
         cursor = ">" if index == self._active_row else " "
@@ -1914,6 +1952,7 @@ class PyHerdrTui(App):
         # Set the palette before super().__init__(): App.__init__ parses CSS and
         # calls get_css_variables(), which reads self._palette.
         config = load_config()
+        self._config = config
         self._palette: Palette = config.theme.resolve()
         self._theme_name = (config.theme.name or DEFAULT_THEME).strip()
         # Keybindings: custom prefix, action→key overrides, and user commands.
@@ -2473,6 +2512,11 @@ class PyHerdrTui(App):
                 self._create_workspace_at,
                 quick_paths=self._workspace_picker_quick_paths(),
                 search_roots=self._workspace_picker_search_roots(),
+                search_max_depth=self._config.workspace.search_max_depth,
+                search_max_results=self._config.workspace.search_max_results,
+                search_ignore_names=self._config.workspace.search_ignore,
+                search_include_hidden=self._config.workspace.search_include_hidden,
+                search_cache_ttl_seconds=self._config.workspace.search_cache_ttl_seconds,
             )
         )
 
@@ -2499,17 +2543,33 @@ class PyHerdrTui(App):
         roots: list[SearchRoot] = []
         start = self._workspace_picker_start()
         roots.append(SearchRoot(start, label="current workspace", source="current"))
-        home = os.path.expanduser("~")
-        for name in ("github", "code", "src", "work"):
-            candidate = os.path.join(home, name)
-            if os.path.isdir(candidate):
-                roots.append(SearchRoot(candidate, label=name, source="configured"))
+        configured = self._config.workspace.search_roots
+        if configured:
+            for raw_path in configured:
+                path = self._expand_config_path(raw_path)
+                if path:
+                    roots.append(SearchRoot(path, label=self._search_root_label(path), source="configured"))
+        else:
+            home = os.path.expanduser("~")
+            for name in ("github", "code", "src", "work"):
+                candidate = os.path.join(home, name)
+                if os.path.isdir(candidate):
+                    roots.append(SearchRoot(candidate, label=name, source="configured"))
         repo_root = _git_root(start)
         if repo_root:
             roots.append(SearchRoot(repo_root, label="repo root", source="repo"))
         for recent in load_workspace_recents():
             roots.append(SearchRoot(str(recent["path"]), label=str(recent["label"]), source="recent"))
         return self._dedupe_search_roots(roots)
+
+    @staticmethod
+    def _expand_config_path(path: str) -> str:
+        expanded = os.path.expandvars(os.path.expanduser(path.strip()))
+        return os.path.abspath(expanded) if expanded else ""
+
+    @staticmethod
+    def _search_root_label(path: str) -> str:
+        return os.path.basename(os.path.normpath(path)) or path
 
     @staticmethod
     def _dedupe_search_roots(roots: list[SearchRoot]) -> list[SearchRoot]:

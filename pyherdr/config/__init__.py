@@ -16,6 +16,7 @@ from .settings import (
     UiConfig,
     UpdateChannel,
     UpdateConfig,
+    WorkspaceConfig,
     WorktreesConfig,
 )
 from .sound import AgentSoundOverrides, AgentSoundSetting, SoundConfig
@@ -44,6 +45,7 @@ __all__ = [
     "UiConfig",
     "UpdateChannel",
     "UpdateConfig",
+    "WorkspaceConfig",
     "WorktreesConfig",
     "config_path",
     "load_config",

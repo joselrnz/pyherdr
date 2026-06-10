@@ -753,7 +753,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             source="workspace",
         )
 
-        def fake_search(query: str, _roots: object) -> list[ExplorerRow]:
+        def fake_search(query: str, _roots: object, **_kwargs: object) -> list[ExplorerRow]:
             time.sleep(0.2 if query == "alpha" else 0.01)
             return [alpha_row] if query == "alpha" else [beta_row]
 
@@ -1047,6 +1047,77 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 quick_paths = app._workspace_picker_quick_paths()
 
         self.assertIn(("recent: recent project", os.path.abspath(recent)), quick_paths)
+
+    async def test_new_workspace_picker_uses_configured_search_roots(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            configured = root / "configured-projects"
+            configured.mkdir()
+            current = root / "current"
+            current.mkdir()
+            config_path = root / "config.toml"
+            config_path.write_text(
+                f"""
+[workspace]
+search_roots = ["{configured.as_posix()}"]
+""".strip(),
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"PYHERDR_CONFIG_PATH": str(config_path)}, clear=False):
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+                app._state = {
+                    "focused_workspace_id": "wsx",
+                    "workspaces": [
+                        {
+                            "id": "wsx",
+                            "label": "current",
+                            "cwd": str(current),
+                            "tabs": [],
+                        }
+                    ],
+                }
+                app._workspace_id = "wsx"
+                roots = app._workspace_picker_search_roots()
+
+        self.assertIn(SearchRoot(os.path.abspath(configured), label="configured-projects", source="configured"), roots)
+
+    async def test_dir_picker_search_uses_configured_scan_options(self):
+        import tempfile
+        from unittest.mock import patch
+
+        root = tempfile.mkdtemp()
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        with patch("pyherdr.presentation.tui.search_workspace_rows", return_value=[]) as search:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.push_screen(
+                    DirPickerScreen(
+                        root,
+                        lambda path: None,
+                        search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                        search_debounce=0,
+                        search_max_depth=2,
+                        search_max_results=7,
+                        search_ignore_names=["vendor", "node_modules"],
+                        search_include_hidden=True,
+                    )
+                )
+                await pilot.pause()
+                app.screen.on_key(self._key_event("ctrl+f"))
+                await app.screen.on_input_changed(self._changed_event("alpha"))
+                await pilot.pause(0.2)
+
+        self.assertEqual(search.call_count, 1)
+        _args, kwargs = search.call_args
+        self.assertEqual(kwargs["max_depth"], 2)
+        self.assertEqual(kwargs["max_results"], 7)
+        self.assertEqual(kwargs["ignore_names"], ("vendor", "node_modules"))
+        self.assertTrue(kwargs["include_hidden"])
 
     async def test_move_workspace_up_down(self):
         client = FakeClient()
