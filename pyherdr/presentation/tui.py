@@ -1250,17 +1250,20 @@ class DirPickerScreen(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#dir-box", Vertical).border_title = "choose workspace folder"
-        await self._populate()
+        await self._populate("")
 
-    async def _populate(self) -> None:
+    async def _populate(self, query: str | None = None) -> None:
         self.query_one("#dir-path", Static).update(self._cwd.replace("\\", "/"))
         listing = self.query_one("#dir-list", VerticalScroll)
         await listing.remove_children()
+        needle = (query if query is not None else self.query_one("#dir-jump", Input).value).strip().lower()
         rows: list[Static] = [Clickable("✓ open this folder", "dir_open", classes="dir-open", id="dir-open")]
         parent = os.path.dirname(self._cwd)
         if parent and parent != self._cwd:
             rows.append(Clickable("  ..", "dir_up", classes="dir-row", id="dir-up"))
         for index, (label, path) in enumerate(self._quick_paths):
+            if needle and needle not in label.lower() and needle not in path.lower():
+                continue
             rows.append(
                 Clickable(
                     f"  {label}: {path}",
@@ -1272,6 +1275,8 @@ class DirPickerScreen(ModalScreen[None]):
             )
         for index, name in enumerate(self._subdirs()):
             full = os.path.join(self._cwd, name)
+            if needle and needle not in name.lower() and needle not in full.lower():
+                continue
             rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
         await listing.mount(*rows)
 
@@ -1315,6 +1320,9 @@ class DirPickerScreen(ModalScreen[None]):
         if os.path.isdir(path):
             self._cwd = os.path.abspath(path)
             self.run_worker(self._populate())
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        await self._populate(event.value)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":

@@ -318,6 +318,19 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
     def _activated(action: str, arg: str | None) -> object:
         return type("Activated", (), {"action": action, "arg": arg, "stop": lambda self: None})()
 
+    @staticmethod
+    def _changed_event(value: str) -> object:
+        return type("Changed", (), {"value": value})()
+
+    @staticmethod
+    def _screen_text(screen: object, selector: str) -> str:
+        widget = screen.query_one(selector)
+        lines: list[str] = []
+        for child in widget.children:
+            renderable = child.render()
+            lines.append(renderable.plain if hasattr(renderable, "plain") else str(renderable))
+        return "\n".join(lines)
+
     async def test_dir_picker_navigates_and_selects(self):
         import os
         import tempfile
@@ -356,6 +369,33 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app.screen.on_activated(self._activated("dir_open", None))
             await pilot.pause()
             self.assertEqual(selected, [os.path.abspath(quick)])
+
+    async def test_dir_picker_input_filters_folders_and_quick_paths(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        os.makedirs(os.path.join(base, "alpha"))
+        os.makedirs(os.path.join(base, "beta"))
+        recent = tempfile.mkdtemp()
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append, quick_paths=[("recent project", recent)]))
+            await pilot.pause()
+            await app.screen.on_input_changed(self._changed_event("alp"))
+            await pilot.pause()
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("alpha/", text)
+            self.assertNotIn("beta/", text)
+            self.assertNotIn("recent project", text)
+
+            await app.screen.on_input_changed(self._changed_event("recent"))
+            await pilot.pause()
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("recent project", text)
+            self.assertNotIn("alpha/", text)
 
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
