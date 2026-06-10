@@ -451,8 +451,11 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.push_screen(DirPickerScreen(base, selected.append))
             await pilot.pause()
-            self.assertIn(os.path.abspath(base).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
-            self.assertIn("Open This Folder", self._screen_text(app.screen, "#dir-current"))
+            app.screen.query_one("#dir-current-card")
+            current_text = self._widget_text(app.screen, "#dir-path")
+            self.assertIn("CURRENT FOLDER", current_text)
+            self.assertIn(os.path.abspath(base).replace("\\", "/"), current_text)
+            self.assertIn("Open Current", self._widget_text(app.screen, "#dir-open-current"))
             self.assertNotIn("open this folder", self._screen_text(app.screen, "#dir-list").lower())
 
             app.screen.on_activated(self._activated("dir_open", None))

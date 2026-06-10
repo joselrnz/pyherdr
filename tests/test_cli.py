@@ -40,7 +40,7 @@ class CliTests(unittest.TestCase):
             svg = output.read_text(encoding="utf-8")
         plain = html.unescape(svg).replace("\xa0", " ")
         self.assertIn("choose workspace folder", plain)
-        self.assertIn("Open This Folder", plain)
+        self.assertIn("Open Current", plain)
         self.assertIn("ls/cd/pwd/open commands", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)

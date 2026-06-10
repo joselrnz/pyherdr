@@ -1244,17 +1244,34 @@ class DirPickerScreen(ModalScreen[None]):
         border-title-color: $ph-accent;
         padding: 1 1;
     }
-    #dir-current { height: auto; padding: 0 0 1 0; }
-    #dir-path { width: 1fr; color: $ph-subtext0; padding: 0 1; }
+    #dir-current {
+        height: 5;
+        padding: 0;
+        margin: 1 0 1 0;
+    }
+    #dir-current-card {
+        width: 1fr;
+        height: 5;
+        background: $ph-mantle;
+        border: round $ph-surface0;
+        padding: 0 1;
+    }
+    #dir-path {
+        width: 1fr;
+        height: 3;
+        color: $ph-subtext0;
+        padding: 0 1;
+    }
     .dir-current-open {
-        width: auto;
-        height: 1;
-        min-height: 1;
+        width: 16;
+        height: 3;
+        min-height: 3;
         background: $ph-green;
         color: $ph-base;
+        content-align: center middle;
         text-style: bold;
         padding: 0 1;
-        margin: 1 0 0 1;
+        margin: 0 1 0 1;
     }
     .dir-current-open:hover { background: $ph-accent; color: $ph-base; }
     #dir-list { height: auto; max-height: 16; }
@@ -1300,8 +1317,9 @@ class DirPickerScreen(ModalScreen[None]):
         with Vertical(id="dir-box"):
             yield Input(placeholder="search, cd, ls, pwd, open, or paste a path", id="dir-jump")
             with Horizontal(id="dir-current"):
-                yield Static("", id="dir-path")
-                yield Clickable("Open This Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
+                with Horizontal(id="dir-current-card"):
+                    yield Static("", id="dir-path")
+                    yield Clickable("Open Current", "dir_open", classes="dir-current-open", id="dir-open-current")
             yield VerticalScroll(id="dir-list")
             yield Static("click a folder to enter  ·  open current path  ·  esc cancel", id="dir-foot")
 
