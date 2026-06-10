@@ -6,7 +6,7 @@ from typing import Any
 
 from textual.widgets import Input
 
-from .presentation.tui import Activated, FanoutScreen, PyHerdrTui, WorkflowScreen
+from .presentation.tui import Activated, DirPickerScreen, DirRepoMetadata, FanoutScreen, PyHerdrTui, WorkflowScreen
 from .workflow import new_event
 
 DEMO_STATE: dict[str, Any] = {
@@ -193,6 +193,30 @@ DEMO_WORKFLOW_EVENTS = [
 ]
 
 
+DEMO_PICKER_ROOT = "C:/Users/josel/github/pyherdr"
+
+
+class DemoDirPickerScreen(DirPickerScreen):
+    """Deterministic workspace picker data for screenshot exports."""
+
+    def __init__(self) -> None:
+        super().__init__(".", lambda path: None)
+        self._cwd = DEMO_PICKER_ROOT
+        self._quick_paths = [
+            ("current workspace", DEMO_PICKER_ROOT),
+            ("repo root", DEMO_PICKER_ROOT),
+            ("recent: ghostc-plugin", "C:/work/ghostc-plugin"),
+            ("process cwd", DEMO_PICKER_ROOT),
+            ("home", "C:/Users/josel"),
+        ]
+
+    def _subdirs(self) -> list[str]:
+        return ["assets", "dist", "pyherdr", "tests", "tools"]
+
+    def _repo_metadata(self) -> DirRepoMetadata:
+        return DirRepoMetadata(repo_root=DEMO_PICKER_ROOT, branch="main", dirty=True)
+
+
 class DemoScreenshotClient:
     """PaneClient implementation that feeds the TUI a deterministic demo state."""
 
@@ -325,6 +349,9 @@ async def _render(path: Path, width: int, height: int, view: str) -> Path:
                 app.screen.query_one("#fanout-command", Input).value = "pytest -q"
                 app.screen.on_activated(Activated("fanout_target", "1"))
                 await pilot.pause(0.5)
+        elif view == "workspace-picker":
+            app.push_screen(DemoDirPickerScreen())
+            await pilot.pause(0.5)
         path.write_text(app.export_screenshot(title="PyHerdr demo TUI", simplify=False), encoding="utf-8")
     return path
 
@@ -333,6 +360,6 @@ def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38, vi
     """Render the real Textual TUI with deterministic demo data to an SVG file."""
 
     normalized = view.strip().lower()
-    if normalized not in ("main", "workflow", "fanout"):
+    if normalized not in ("main", "workflow", "fanout", "workspace-picker"):
         raise ValueError(f"unknown demo screenshot view: {view}")
     return asyncio.run(_render(path, width, height, normalized))
