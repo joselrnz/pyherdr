@@ -143,6 +143,8 @@ pyherdr pane create --title logs
 pyherdr pane start 1-1 python -i
 pyherdr pane send-text 1-1 "print('hi')\n"
 pyherdr pane get 1-1                    # pane metadata incl. command + agent status
+pyherdr pane fanout --target workspace:main -- pytest -q     # dry-run preview
+pyherdr pane fanout --all --execute --no-enter -- git status  # send to every pane
 pyherdr workflow event validation.ok --worksite WS-121 --message "tests passed"
 pyherdr workflow graph --format mermaid  # workflow/call-flow graph export
 pyherdr workflow graph --format svg --output workflow.svg  # browser-quality call graph

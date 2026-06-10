@@ -264,6 +264,17 @@ def build_parser() -> argparse.ArgumentParser:
     pane_broadcast.add_argument("text")
     pane_broadcast.add_argument("--scope", default="all", choices=["all", "workspace", "tab"])
     pane_broadcast.add_argument("--no-enter", action="store_true")
+    pane_fanout = pane_sub.add_parser("fanout", help="preview or send text to selected panes")
+    pane_fanout.add_argument("command_parts", nargs=argparse.REMAINDER)
+    pane_fanout.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="all, session:NAME, workspace:ID, tab:ID, pane:ID, or agent:NAME",
+    )
+    pane_fanout.add_argument("--all", action="store_true", help="target every pane in the current session")
+    pane_fanout.add_argument("--execute", action="store_true", help="send text after previewing targets")
+    pane_fanout.add_argument("--no-enter", action="store_true", help="insert text without pressing Enter")
 
     agent = sub.add_parser("agent", help="agent commands (resolve by name or pane id)")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)
@@ -333,6 +344,13 @@ def run_demo_screenshot(args) -> int:
     output = render_demo_screenshot(Path(args.output), width=args.width, height=args.height, view=args.view)
     print(output)
     return 0
+
+
+def _command_from_parts(parts: list[str]) -> str:
+    cleaned = list(parts)
+    if cleaned and cleaned[0] == "--":
+        cleaned = cleaned[1:]
+    return " ".join(cleaned).strip()
 
 
 def run_schedule(args) -> int:
@@ -697,6 +715,28 @@ def run_pane(args) -> int:
                 "id": "cli",
                 "method": "pane.broadcast",
                 "params": {"text": args.text, "scope": args.scope, "enter": not args.no_enter},
+            }
+        )
+        return print_response(response)
+    if args.pane_command == "fanout":
+        command = _command_from_parts(args.command_parts)
+        targets = (["all"] if args.all else []) + list(args.target)
+        if not command:
+            print("missing command", file=sys.stderr)
+            return 2
+        if not targets:
+            print("missing target: pass --all or one or more --target selectors", file=sys.stderr)
+            return 2
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "pane.fanout",
+                "params": {
+                    "targets": targets,
+                    "text": command,
+                    "enter": not args.no_enter,
+                    "dry_run": not args.execute,
+                },
             }
         )
         return print_response(response)

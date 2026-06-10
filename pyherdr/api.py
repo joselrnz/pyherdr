@@ -18,6 +18,7 @@ from .models import AgentStatus, AppState, Pane, Tab
 from .notification import Notification, deliver
 from .runtime import TerminalManager
 from .runtime.procstats import AVAILABLE as STATS_AVAILABLE
+from .session import current_session
 from .store import to_dict
 from .worktree import create_worktree, list_worktrees, remove_worktree
 
@@ -90,6 +91,7 @@ def _dispatch_method(
         "pane.stop": _pane_stop,
         "pane.report_agent": _pane_report_agent,
         "pane.broadcast": _pane_broadcast,
+        "pane.fanout": _pane_fanout,
         "agent.list": _agent_list,
         "agent.get": _agent_get,
         "agent.read": _agent_read,
@@ -762,6 +764,124 @@ def _pane_broadcast(state: AppState, params: dict[str, Any], processes: Terminal
     pane_ids = _panes_in_scope(state, scope)
     sent = processes.broadcast(pane_ids, text)
     return {"type": "pane_broadcast", "scope": scope, "targets": len(pane_ids), "sent": sent}
+
+
+def _pane_fanout(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    text = _required(params, "text")
+    targets = _param_list(params.get("targets"))
+    if not targets:
+        raise ValueError("pane.fanout requires at least one target")
+    enter = _param_bool(params.get("enter"), default=True)
+    dry_run = _param_bool(params.get("dry_run"), default=True)
+    target_records = _resolve_fanout_targets(state, targets)
+    if not target_records:
+        raise ValueError("fanout targets matched no panes")
+    pane_ids = [record["pane_id"] for record in target_records]
+    payload = text + ("\n" if enter else "")
+    sent = 0
+    if not dry_run:
+        if processes is None:
+            raise ValueError("pane.fanout execute requires a server process manager")
+        sent = processes.broadcast(pane_ids, payload)
+    return {
+        "type": "pane_fanout",
+        "dry_run": dry_run,
+        "enter": enter,
+        "target_count": len(target_records),
+        "targets": target_records,
+        "sent": sent,
+        "bytes": len(payload.encode("utf-8")),
+    }
+
+
+def _resolve_fanout_targets(state: AppState, selectors: list[str]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        for pane, workspace, tab in _iter_fanout_matches(state, selector):
+            if pane.id in seen:
+                continue
+            seen.add(pane.id)
+            record = _pane_record(pane, workspace.id, tab.id)
+            record["workspace_label"] = workspace.label
+            record["tab_label"] = tab.label
+            records.append(record)
+    return records
+
+
+def _iter_fanout_matches(state: AppState, selector: str):
+    normalized = selector.strip()
+    if not normalized:
+        return []
+    if ":" in normalized:
+        kind, value = normalized.split(":", 1)
+        kind = kind.strip().lower()
+        value = value.strip()
+    else:
+        kind, value = "pane", normalized
+    if kind == "all":
+        return list(_iter_pane_contexts(state))
+    if kind == "session":
+        current = current_session().lower()
+        if value.lower() in ("", "*", "current", current):
+            return list(_iter_pane_contexts(state))
+        return []
+    if kind == "workspace":
+        return [
+            item
+            for item in _iter_pane_contexts(state)
+            if _matches_identity(item[1].id, item[1].label, value)
+        ]
+    if kind == "tab":
+        return [
+            item
+            for item in _iter_pane_contexts(state)
+            if _matches_identity(item[2].id, item[2].label, value)
+        ]
+    if kind == "pane":
+        return [item for item in _iter_pane_contexts(state) if item[0].id == value]
+    if kind == "agent":
+        return [
+            item
+            for item in _iter_pane_contexts(state)
+            if item[0].agent.lower() == value.lower() or item[0].title.lower() == value.lower()
+        ]
+    raise ValueError(f"unknown fanout target selector: {kind}")
+
+
+def _iter_pane_contexts(state: AppState):
+    for workspace in state.workspaces:
+        for tab in workspace.tabs:
+            for pane in tab.panes:
+                yield pane, workspace, tab
+
+
+def _matches_identity(identifier: str, label: str, value: str) -> bool:
+    return identifier == value or label.lower() == value.lower()
+
+
+def _param_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    raise ValueError("targets must be a string or list of strings")
+
+
+def _param_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes", "on"):
+            return True
+        if lowered in ("0", "false", "no", "off"):
+            return False
+    return bool(value)
 
 
 def _tab_sync(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:

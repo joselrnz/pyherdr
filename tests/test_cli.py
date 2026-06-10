@@ -20,6 +20,35 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.format, "svg")
         self.assertEqual(args.output, "graph.svg")
 
+    def test_pane_fanout_accepts_targets_and_execute_flag(self):
+        args = build_parser().parse_args(
+            [
+                "pane",
+                "fanout",
+                "--all",
+                "--target",
+                "session:current",
+                "--target",
+                "workspace:main",
+                "--target",
+                "tab:tests",
+                "--target",
+                "pane:1-1",
+                "--execute",
+                "--no-enter",
+                "pytest",
+                "-q",
+            ]
+        )
+
+        self.assertEqual(args.command, "pane")
+        self.assertEqual(args.pane_command, "fanout")
+        self.assertTrue(args.all)
+        self.assertEqual(args.target, ["session:current", "workspace:main", "tab:tests", "pane:1-1"])
+        self.assertTrue(args.execute)
+        self.assertTrue(args.no_enter)
+        self.assertEqual(args.command_parts, ["pytest", "-q"])
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")

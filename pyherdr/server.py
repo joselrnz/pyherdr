@@ -146,13 +146,21 @@ class RequestHandler(BaseRequestHandler):
             response = dispatch(server.state, request, server.processes)
             if "error" not in response and mutates_state(str(request.get("method") or "")):
                 save_state(server.state, server.state_path)
+        response_details: dict[str, Any] = {"id": request_id, "error": response.get("error")}
+        result = response.get("result")
+        if method == "pane.fanout" and isinstance(result, dict):
+            response_details["result"] = {
+                "dry_run": result.get("dry_run"),
+                "target_count": result.get("target_count"),
+                "sent": result.get("sent"),
+            }
         _record_workflow_event(
             "api.response",
             message=method or "response",
             source="server",
             target=method,
             status="error" if "error" in response else "ok",
-            details={"id": request_id, "error": response.get("error")},
+            details=response_details,
         )
         self._write(response)
 
@@ -404,6 +412,7 @@ def mutates_state(method: str) -> bool:
         "pane.send_key",
         "pane.resize",
         "pane.scroll",
+        "pane.fanout",
         "agent.list",
         "agent.get",
         "agent.read",
