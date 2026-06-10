@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .config import load_config
 from .gui import main as dashboard_main
 from .models import AgentStatus
 from .server import (
@@ -26,6 +27,7 @@ from .server import (
 from .session import DEFAULT_SESSION, list_session_names, session_runtime_dir
 from .store import load_state
 from .workspace_recents import load_workspace_recents, prune_workspace_recents
+from .workspace_search import SearchRoot, row_to_dict, search_workspace_rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -192,6 +194,24 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_recents.add_argument("--all", action="store_true", help="include stale roots")
     workspace_recents.add_argument("--json", action="store_true", help="print machine-readable JSON")
     workspace_recents.add_argument("--prune", action="store_true", help="remove stale roots from the recents file")
+    workspace_search = workspace_sub.add_parser("search", help="search configured workspace roots")
+    workspace_search.add_argument("query")
+    workspace_search.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    workspace_search.add_argument(
+        "--root",
+        action="append",
+        default=[],
+        help="root directory to scan; repeat to scan several roots instead of configured roots",
+    )
+    workspace_search.add_argument("--max-depth", type=int, help="override workspace.search_max_depth")
+    workspace_search.add_argument("--max-results", type=int, help="override workspace.search_max_results")
+    workspace_search.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        help="directory name to skip; repeat to override workspace.search_ignore",
+    )
+    workspace_search.add_argument("--include-hidden", action="store_true", help="include hidden folders")
 
     worktree = sub.add_parser("worktree", help="git worktree commands")
     worktree_sub = worktree.add_subparsers(dest="worktree_command", required=True)
@@ -592,6 +612,8 @@ def run_workspace(args) -> int:
         )
     elif args.workspace_command == "recents":
         return run_workspace_recents(args)
+    elif args.workspace_command == "search":
+        return run_workspace_search(args)
     else:
         return 2
     return print_response(response)
@@ -616,6 +638,84 @@ def run_workspace_recents(args) -> int:
         suffix = " [stale]" if record["stale"] else ""
         print(f"{record['label']}\t{record['path']}{suffix}")
     return 0
+
+
+def run_workspace_search(args) -> int:
+    config = load_config()
+    roots = _workspace_search_roots(args.root, config.workspace.search_roots)
+    ignore_names = tuple(args.ignore) if args.ignore else tuple(config.workspace.search_ignore)
+    max_depth = config.workspace.search_max_depth if args.max_depth is None else args.max_depth
+    max_results = config.workspace.search_max_results if args.max_results is None else args.max_results
+    include_hidden = bool(args.include_hidden or config.workspace.search_include_hidden)
+    rows = search_workspace_rows(
+        args.query,
+        roots,
+        max_depth=max(0, max_depth),
+        max_results=max(1, max_results),
+        ignore_names=ignore_names,
+        include_hidden=include_hidden,
+    )
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "query": args.query,
+                    "roots": [root.__dict__ for root in roots],
+                    "results": [row_to_dict(row) for row in rows],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if not rows:
+        print("no matching workspace roots")
+        return 0
+    for row in rows:
+        stale = " [stale]" if row.stale else ""
+        print(f"{row.kind}\t{row.label}\t{row.path}{stale}")
+    return 0
+
+
+def _workspace_search_roots(cli_roots: list[str], configured_roots: list[str]) -> list[SearchRoot]:
+    raw_roots = cli_roots or configured_roots
+    roots: list[SearchRoot] = []
+    if raw_roots:
+        for raw_path in raw_roots:
+            path = _expand_search_root(raw_path)
+            if path:
+                source = "cli" if cli_roots else "configured"
+                roots.append(SearchRoot(path, label=_search_root_label(path), source=source))
+    else:
+        roots.append(SearchRoot(str(Path.cwd()), label="process cwd", source="current"))
+        home = Path.home()
+        for name in ("github", "code", "src", "work"):
+            candidate = home / name
+            if candidate.is_dir():
+                roots.append(SearchRoot(str(candidate), label=name, source="configured"))
+        for recent in load_workspace_recents():
+            roots.append(SearchRoot(str(recent["path"]), label=str(recent["label"]), source="recent"))
+    return _dedupe_search_roots(roots)
+
+
+def _expand_search_root(path: str) -> str:
+    expanded = os.path.expandvars(os.path.expanduser(path.strip()))
+    return str(Path(expanded).resolve()) if expanded else ""
+
+
+def _search_root_label(path: str) -> str:
+    return Path(path).name or path
+
+
+def _dedupe_search_roots(roots: list[SearchRoot]) -> list[SearchRoot]:
+    deduped: list[SearchRoot] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = os.path.normcase(root.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(root)
+    return deduped
 
 
 def run_worktree(args) -> int:

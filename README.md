@@ -175,6 +175,7 @@ The UI is a client; everything it does is scriptable:
 pyherdr status                         # server + session status
 pyherdr workspace create --label api --cwd ~/code
 pyherdr workspace recents --all --prune # inspect or clean stale picker roots
+pyherdr workspace search api --json      # inspect configured picker search roots
 pyherdr tab create --label tests
 pyherdr pane create --title logs
 pyherdr pane start 1-1 python -i

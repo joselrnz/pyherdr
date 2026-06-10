@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from pyherdr.cli import build_parser
@@ -77,6 +79,71 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.all)
         self.assertTrue(args.json)
         self.assertTrue(args.prune)
+
+    def test_workspace_search_accepts_json_and_scan_overrides(self):
+        args = build_parser().parse_args(
+            [
+                "workspace",
+                "search",
+                "alpha",
+                "--json",
+                "--root",
+                "C:/code",
+                "--max-depth",
+                "2",
+                "--max-results",
+                "7",
+                "--ignore",
+                "vendor",
+                "--include-hidden",
+            ]
+        )
+
+        self.assertEqual(args.command, "workspace")
+        self.assertEqual(args.workspace_command, "search")
+        self.assertEqual(args.query, "alpha")
+        self.assertTrue(args.json)
+        self.assertEqual(args.root, ["C:/code"])
+        self.assertEqual(args.max_depth, 2)
+        self.assertEqual(args.max_results, 7)
+        self.assertEqual(args.ignore, ["vendor"])
+        self.assertTrue(args.include_hidden)
+
+    def test_workspace_search_json_outputs_matching_repositories(self):
+        import json
+        import tempfile
+
+        from pyherdr.cli import run_workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha-api"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            ignored = root / "vendor" / "alpha-hidden"
+            ignored.mkdir(parents=True)
+            args = build_parser().parse_args(
+                [
+                    "workspace",
+                    "search",
+                    "alpha",
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--ignore",
+                    "vendor",
+                ]
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = run_workspace(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["query"], "alpha")
+        self.assertEqual([row["label"] for row in payload["results"]], ["alpha-api"])
+        self.assertEqual(payload["results"][0]["kind"], "repo")
+        self.assertNotIn("alpha-hidden", json.dumps(payload))
 
     def test_pane_fanout_accepts_targets_and_execute_flag(self):
         args = build_parser().parse_args(
