@@ -440,6 +440,93 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(git_branch.call_count, branch_calls)
                 self.assertEqual(git_dirty.call_count, dirty_calls)
 
+    async def test_dir_picker_current_path_action_bar_opens_current_folder(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(base).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+            self.assertIn("Open This Folder", self._screen_text(app.screen, "#dir-current"))
+            self.assertNotIn("open this folder", self._screen_text(app.screen, "#dir-list").lower())
+
+            app.screen.on_activated(self._activated("dir_open", None))
+            await pilot.pause()
+
+        self.assertEqual(selected, [os.path.abspath(base)])
+
+    async def test_dir_picker_input_accepts_safe_navigation_commands(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        alpha = os.path.join(base, "alpha")
+        beta = os.path.join(base, "beta")
+        nested = os.path.join(alpha, "nested")
+        os.makedirs(nested)
+        os.makedirs(beta)
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append))
+            await pilot.pause()
+
+            app.screen.on_input_submitted(self._submit_event("ls alp"))
+            await pilot.pause()
+            listing = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("alpha/", listing)
+            self.assertNotIn("beta/", listing)
+
+            app.screen.on_input_submitted(self._submit_event("cd alpha"))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(alpha).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+            self.assertIn("nested/", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_input_submitted(self._submit_event("pwd"))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(alpha).replace("\\", "/"), self._widget_text(app.screen, "#dir-foot"))
+
+            app.screen.on_input_submitted(self._submit_event("cd .."))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(base).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+
+            app.screen.on_input_submitted(self._submit_event("open alpha"))
+            await pilot.pause()
+
+        self.assertEqual(selected, [os.path.abspath(alpha)])
+
+    async def test_dir_picker_file_paths_navigate_or_open_containing_folder(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        alpha = os.path.join(base, "alpha")
+        os.makedirs(alpha)
+        file_path = os.path.join(alpha, "README.md")
+        with open(file_path, "w", encoding="utf-8") as handle:
+            handle.write("# demo\n")
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append))
+            await pilot.pause()
+
+            app.screen.on_input_submitted(self._submit_event(f"cd {file_path}"))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(alpha).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+
+            app.screen.on_input_submitted(self._submit_event(f"open {file_path}"))
+            await pilot.pause()
+
+        self.assertEqual(selected, [os.path.abspath(alpha)])
+
     async def test_dir_picker_search_mode_selects_and_opens_result(self):
         import os
         import tempfile

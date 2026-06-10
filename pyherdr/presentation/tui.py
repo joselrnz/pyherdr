@@ -1244,7 +1244,16 @@ class DirPickerScreen(ModalScreen[None]):
         border-title-color: $ph-accent;
         padding: 1 1;
     }
-    #dir-path { color: $ph-subtext0; padding: 0 0 1 0; }
+    #dir-current { height: auto; padding: 0 0 1 0; }
+    #dir-path { width: 1fr; color: $ph-subtext0; padding: 0 1; border: solid $ph-overlay0; }
+    .dir-current-open {
+        width: auto;
+        color: $ph-green;
+        text-style: bold;
+        padding: 1 1;
+        border: solid $ph-green;
+    }
+    .dir-current-open:hover { background: $ph-green; color: $ph-base; }
     #dir-list { height: auto; max-height: 16; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
@@ -1281,14 +1290,17 @@ class DirPickerScreen(ModalScreen[None]):
         self._active_row = 0
         self._selected_paths: set[str] = set()
         self._query = ""
+        self._command_status = ""
         self._populate_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
-            yield Input(placeholder="…or type/paste a path and press enter", id="dir-jump")
-            yield Static("", id="dir-path")
+            yield Input(placeholder="search, cd, ls, pwd, open, or paste a path", id="dir-jump")
+            with Horizontal(id="dir-current"):
+                yield Static("", id="dir-path")
+                yield Clickable("Open This Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
             yield VerticalScroll(id="dir-list")
-            yield Static("click a folder to enter  ·  ✓ open this folder  ·  esc cancel", id="dir-foot")
+            yield Static("click a folder to enter  ·  open current path  ·  esc cancel", id="dir-foot")
 
     async def on_mount(self) -> None:
         self.query_one("#dir-box", Vertical).border_title = "choose workspace folder"
@@ -1310,7 +1322,7 @@ class DirPickerScreen(ModalScreen[None]):
         if self._search_mode:
             await self._populate_search(listing, needle)
             return
-        rows: list[Static] = [Clickable("✓ open this folder", "dir_open", classes="dir-open", id="dir-open")]
+        rows: list[Static] = []
         parent = os.path.dirname(self._cwd)
         if parent and parent != self._cwd:
             rows.append(Clickable("  ..", "dir_up", classes="dir-row", id="dir-up"))
@@ -1332,6 +1344,7 @@ class DirPickerScreen(ModalScreen[None]):
                 continue
             rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
         await listing.mount(*rows)
+        self._update_browse_footer()
 
     async def _populate_search(self, listing: VerticalScroll, needle: str) -> None:
         self._search_rows = search_workspace_rows(needle, self._search_roots)
@@ -1374,17 +1387,20 @@ class DirPickerScreen(ModalScreen[None]):
         return Text(f"{cursor} {selected} {kind:<5} {row.label}  {detail}")
 
     def _update_search_footer(self) -> None:
-        self.query_one("#dir-foot", Static).update(
-            "search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel"
-        )
+        self._update_footer("search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel")
 
     def _update_browse_footer(self) -> None:
-        self.query_one("#dir-foot", Static).update(
-            "click a folder to enter  ·  ctrl+f search roots  ·  ✓ open this folder  ·  esc cancel"
-        )
+        self._update_footer("ls/cd/pwd/open commands · ctrl+f search roots · alt+o open current · esc cancel")
+
+    def _update_footer(self, help_text: str) -> None:
+        text = help_text
+        if self._command_status:
+            text = f"{self._command_status}\n{help_text}"
+        self.query_one("#dir-foot", Static).update(text)
 
     def _path_summary(self, subdirs: list[str]) -> Text:
-        text = Text(self._cwd.replace("\\", "/"))
+        text = Text("CURRENT FOLDER\n")
+        text.append(self._cwd.replace("\\", "/"))
         facts = [self._folder_count_text(len(subdirs))]
         metadata = self._repo_metadata()
         if metadata.repo_root:
@@ -1419,6 +1435,10 @@ class DirPickerScreen(ModalScreen[None]):
         return f"{count} folder" if count == 1 else f"{count} folders"
 
     @staticmethod
+    def _display_path(path: str) -> str:
+        return path.replace("\\", "/")
+
+    @staticmethod
     def _normalize_quick_paths(paths: list[tuple[str, str]]) -> list[tuple[str, str]]:
         normalized: list[tuple[str, str]] = []
         seen: set[str] = set()
@@ -1450,6 +1470,91 @@ class DirPickerScreen(ModalScreen[None]):
             names = []
         return sorted(names, key=str.lower)
 
+    def _set_cwd(self, path: str, *, status: str = "") -> None:
+        self._cwd = os.path.abspath(path)
+        self._query = ""
+        self._search_mode = False
+        self._command_status = status
+        self.query_one("#dir-jump", Input).value = ""
+        self.run_worker(self._populate(), exclusive=True)
+
+    def _clear_input_filter(self, *, status: str = "") -> None:
+        self._query = ""
+        self._command_status = status
+        self.query_one("#dir-jump", Input).value = ""
+        self.run_worker(self._populate(), exclusive=True)
+
+    def _resolve_input_path(self, raw_path: str) -> str:
+        path = raw_path.strip().strip("\"'")
+        path = os.path.expandvars(os.path.expanduser(path))
+        if not os.path.isabs(path):
+            path = os.path.join(self._cwd, path)
+        return os.path.abspath(path)
+
+    def _folder_for_input_path(self, raw_path: str) -> tuple[str, bool] | None:
+        path = self._resolve_input_path(raw_path)
+        if os.path.isdir(path):
+            return path, False
+        if os.path.isfile(path):
+            return os.path.dirname(path), True
+        return None
+
+    def _handle_input_command(self, raw: str) -> bool:
+        command, separator, rest = raw.partition(" ")
+        verb = command.lower()
+        arg = rest.strip() if separator else ""
+        if verb not in {"cd", "ls", "dir", "pwd", "open"}:
+            return False
+        if verb == "pwd":
+            self._clear_input_filter(status=f"pwd: {self._display_path(self._cwd)}")
+            return True
+        if verb in {"ls", "dir"}:
+            self._handle_ls_command(arg)
+            return True
+        if verb == "cd":
+            self._handle_cd_command(arg)
+            return True
+        self._handle_open_command(arg)
+        return True
+
+    def _handle_ls_command(self, arg: str) -> None:
+        if not arg:
+            self._clear_input_filter(status=f"ls: {self._display_path(self._cwd)}")
+            return
+        folder = self._folder_for_input_path(arg)
+        if folder:
+            target, from_file = folder
+            status = "ls: showing containing folder" if from_file else f"ls: {self._display_path(target)}"
+            self._set_cwd(target, status=status)
+            return
+        self._query = arg
+        self._command_status = f"ls: filtering for {arg}"
+        self.query_one("#dir-jump", Input).value = ""
+        self.run_worker(self._populate(arg), exclusive=True)
+
+    def _handle_cd_command(self, arg: str) -> None:
+        target_arg = arg or "~"
+        folder = self._folder_for_input_path(target_arg)
+        if not folder:
+            self._clear_input_filter(status=f"cd: not found: {target_arg}")
+            return
+        target, from_file = folder
+        status = "cd: showing containing folder" if from_file else f"cd: {self._display_path(target)}"
+        self._set_cwd(target, status=status)
+
+    def _handle_open_command(self, arg: str) -> None:
+        if not arg or arg == ".":
+            self._on_select(os.path.abspath(self._cwd))
+            self.dismiss()
+            return
+        folder = self._folder_for_input_path(arg)
+        if not folder:
+            self._clear_input_filter(status=f"open: not found: {arg}")
+            return
+        target, _from_file = folder
+        self._on_select(os.path.abspath(target))
+        self.dismiss()
+
     def on_activated(self, message: Activated) -> None:
         message.stop()
         if message.action == "dir_open":
@@ -1475,12 +1580,24 @@ class DirPickerScreen(ModalScreen[None]):
         if self._search_mode:
             self._open_active_search_row()
             return
-        path = os.path.expanduser(event.value.strip())
-        if os.path.isdir(path):
-            self._cwd = os.path.abspath(path)
-            self.run_worker(self._populate(), exclusive=True)
+        raw = event.value.strip()
+        if not raw:
+            return
+        if self._handle_input_command(raw):
+            return
+        folder = self._folder_for_input_path(raw)
+        if folder:
+            target, from_file = folder
+            status = "path: showing containing folder" if from_file else ""
+            self._set_cwd(target, status=status)
+        else:
+            self._clear_input_filter(status=f"not a folder or command: {raw}")
 
     async def on_input_changed(self, event: Input.Changed) -> None:
+        if not self._search_mode and self._is_command_draft(event.value):
+            self._query = ""
+            await self._populate("")
+            return
         await self._populate(event.value)
 
     def on_key(self, event: events.Key) -> None:
@@ -1499,6 +1616,11 @@ class DirPickerScreen(ModalScreen[None]):
             self._search_mode = False
             self._update_browse_footer()
             self.run_worker(self._populate(), exclusive=True)
+        elif event.key in ("alt+o", "ctrl+enter"):
+            event.stop()
+            event.prevent_default()
+            self._on_select(os.path.abspath(self._cwd))
+            self.dismiss()
         elif self._search_mode and event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
@@ -1510,6 +1632,11 @@ class DirPickerScreen(ModalScreen[None]):
             event.prevent_default()
             self._toggle_active_search_row()
             self.run_worker(self._populate(), exclusive=True)
+
+    @staticmethod
+    def _is_command_draft(value: str) -> bool:
+        command = value.strip().split(" ", 1)[0].lower()
+        return command in {"cd", "ls", "dir", "pwd", "open"}
 
     def _move_active_search_row(self, delta: int) -> None:
         if not self._search_rows:
