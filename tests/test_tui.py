@@ -713,16 +713,22 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(("ws1", "down"), client.moved_workspaces)
 
     async def test_move_tab_left_right(self):
+        from unittest.mock import patch
+
         client = FakeClient()
         app = PyHerdrTui(client=client, poll_interval=100)
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
-            app._run_prefix_action(">", ">")  # prefix + > = move tab right
-            await pilot.pause()
-            self.assertIn(("t1", "right"), client.moved)
-            app._run_prefix_action("<", "<")  # prefix + < = move tab left
-            await pilot.pause()
-            self.assertIn(("t1", "left"), client.moved)
+
+            def close_worker(coro, *_args, **_kwargs):
+                coro.close()
+                return None
+
+            with patch.object(app, "run_worker", side_effect=close_worker):
+                app._run_prefix_action(">", ">")  # prefix + > = move tab right
+                self.assertIn(("t1", "right"), client.moved)
+                app._run_prefix_action("<", "<")  # prefix + < = move tab left
+                self.assertIn(("t1", "left"), client.moved)
 
     async def test_custom_command_runs_in_new_tab(self):
         client = FakeClient()
