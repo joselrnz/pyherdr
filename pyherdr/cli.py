@@ -25,6 +25,7 @@ from .server import (
 )
 from .session import DEFAULT_SESSION, list_session_names, session_runtime_dir
 from .store import load_state
+from .workspace_recents import load_workspace_recents, prune_workspace_recents
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,6 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_rename.add_argument("label")
     workspace_close = workspace_sub.add_parser("close")
     workspace_close.add_argument("workspace_id")
+    workspace_recents = workspace_sub.add_parser("recents", help="show or prune recent workspace roots")
+    workspace_recents.add_argument("--all", action="store_true", help="include stale roots")
+    workspace_recents.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    workspace_recents.add_argument("--prune", action="store_true", help="remove stale roots from the recents file")
 
     worktree = sub.add_parser("worktree", help="git worktree commands")
     worktree_sub = worktree.add_subparsers(dest="worktree_command", required=True)
@@ -585,9 +590,32 @@ def run_workspace(args) -> int:
                 "params": {"workspace_id": args.workspace_id},
             }
         )
+    elif args.workspace_command == "recents":
+        return run_workspace_recents(args)
     else:
         return 2
     return print_response(response)
+
+
+def run_workspace_recents(args) -> int:
+    if args.prune:
+        summary = prune_workspace_recents()
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(f"removed {summary['removed']} stale recent workspace root(s); kept {summary['kept']}")
+        return 0
+    records = load_workspace_recents(include_stale=args.all)
+    if args.json:
+        print(json.dumps({"roots": records}, indent=2))
+        return 0
+    if not records:
+        print("no recent workspace roots")
+        return 0
+    for record in records:
+        suffix = " [stale]" if record["stale"] else ""
+        print(f"{record['label']}\t{record['path']}{suffix}")
+    return 0
 
 
 def run_worktree(args) -> int:

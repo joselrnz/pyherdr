@@ -15,7 +15,12 @@ def default_recents_path() -> Path:
     return session_runtime_dir() / "workspace_recents.json"
 
 
-def load_workspace_recents(path: Path | None = None, *, limit: int = MAX_RECENT_WORKSPACES) -> list[dict[str, Any]]:
+def load_workspace_recents(
+    path: Path | None = None,
+    *,
+    limit: int = MAX_RECENT_WORKSPACES,
+    include_stale: bool = False,
+) -> list[dict[str, Any]]:
     target = path or default_recents_path()
     try:
         payload = json.loads(target.read_text(encoding="utf-8"))
@@ -33,7 +38,8 @@ def load_workspace_recents(path: Path | None = None, *, limit: int = MAX_RECENT_
         if not raw_path:
             continue
         workspace_path = Path(raw_path).expanduser().resolve()
-        if not workspace_path.is_dir() or str(workspace_path) in seen:
+        stale = not workspace_path.is_dir()
+        if (stale and not include_stale) or str(workspace_path) in seen:
             continue
         seen.add(str(workspace_path))
         records.append(
@@ -42,6 +48,7 @@ def load_workspace_recents(path: Path | None = None, *, limit: int = MAX_RECENT_
                 "label": str(item.get("label") or workspace_path.name or "workspace"),
                 "last_opened": _float_or_zero(item.get("last_opened")),
                 "repo_root": str(item.get("repo_root") or ""),
+                "stale": stale,
             }
         )
     records.sort(key=lambda record: float(record["last_opened"]), reverse=True)
@@ -70,6 +77,28 @@ def record_workspace_recent(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"version": 1, "roots": [record, *records][:limit]}, indent=2), encoding="utf-8")
     return target
+
+
+def prune_workspace_recents(path: Path | None = None, *, limit: int = MAX_RECENT_WORKSPACES) -> dict[str, Any]:
+    target = path or default_recents_path()
+    if not target.exists():
+        return {"path": str(target), "kept": 0, "removed": 0}
+    records = load_workspace_recents(target, limit=limit, include_stale=True)
+    kept = [record for record in records if not record["stale"]]
+    target.write_text(
+        json.dumps({"version": 1, "roots": [_stored_recent(record) for record in kept]}, indent=2),
+        encoding="utf-8",
+    )
+    return {"path": str(target), "kept": len(kept), "removed": len(records) - len(kept)}
+
+
+def _stored_recent(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": record["path"],
+        "label": record["label"],
+        "last_opened": record["last_opened"],
+        "repo_root": record["repo_root"],
+    }
 
 
 def _float_or_zero(value: Any) -> float:

@@ -45,6 +45,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.format, "svg")
         self.assertEqual(args.output, "graph.svg")
 
+    def test_workspace_recents_accepts_json_all_and_prune(self):
+        args = build_parser().parse_args(["workspace", "recents", "--all", "--json", "--prune"])
+
+        self.assertEqual(args.command, "workspace")
+        self.assertEqual(args.workspace_command, "recents")
+        self.assertTrue(args.all)
+        self.assertTrue(args.json)
+        self.assertTrue(args.prune)
+
     def test_pane_fanout_accepts_targets_and_execute_flag(self):
         args = build_parser().parse_args(
             [

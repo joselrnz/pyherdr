@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from pyherdr.api import dispatch
 from pyherdr.models import AppState
-from pyherdr.workspace_recents import load_workspace_recents
+from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents
 
 
 class _FakeProcesses:
@@ -68,6 +68,43 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(recents[0]["path"], str(workspace.resolve()))
         self.assertEqual(recents[0]["label"], "api")
+
+    def test_workspace_recents_can_include_and_prune_stale_roots(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = root / "existing"
+            stale = root / "missing"
+            existing.mkdir()
+            recents_path = root / "workspace_recents.json"
+            recents_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "roots": [
+                            {"path": str(stale), "label": "gone", "last_opened": 2.0, "repo_root": ""},
+                            {"path": str(existing), "label": "here", "last_opened": 1.0, "repo_root": ""},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            visible = load_workspace_recents(recents_path)
+            all_roots = load_workspace_recents(recents_path, include_stale=True)
+            summary = prune_workspace_recents(recents_path)
+
+            after_prune = load_workspace_recents(recents_path, include_stale=True)
+
+        self.assertEqual([record["label"] for record in visible], ["here"])
+        self.assertEqual([record["label"] for record in all_roots], ["gone", "here"])
+        self.assertTrue(all_roots[0]["stale"])
+        self.assertFalse(all_roots[1]["stale"])
+        self.assertEqual(summary["removed"], 1)
+        self.assertEqual(summary["kept"], 1)
+        self.assertEqual([record["label"] for record in after_prune], ["here"])
 
     def test_pane_report_agent_changes_status(self):
         state = AppState.bootstrap(cwd="C:/work")

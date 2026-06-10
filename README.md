@@ -165,6 +165,7 @@ The UI is a client; everything it does is scriptable:
 ```bash
 pyherdr status                         # server + session status
 pyherdr workspace create --label api --cwd ~/code
+pyherdr workspace recents --all --prune # inspect or clean stale picker roots
 pyherdr tab create --label tests
 pyherdr pane create --title logs
 pyherdr pane start 1-1 python -i
@@ -199,7 +200,8 @@ browser-quality diagram, export SVG and open it in a browser.
 - Workflow audit log: `.pyherdr/workflow.jsonl`; obvious tokens/secrets are
   redacted before events are stored.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
-  and labels only, not the server auth token.
+  and labels only, not the server auth token. Use `pyherdr workspace recents`
+  to inspect or prune stale roots.
 
 The `.pyherdr/` folder holds the auth token and is git-ignored — never commit it.
 
