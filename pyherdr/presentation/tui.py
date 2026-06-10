@@ -285,6 +285,17 @@ class DirRepoMetadata:
     dirty: bool
 
 
+@dataclass(frozen=True)
+class DirBrowseRow:
+    """One keyboard-selectable row in the workspace folder browser."""
+
+    label: str
+    action: str
+    arg: str | None
+    classes: str
+    widget_id: str | None = None
+
+
 def _help_text(palette: Palette) -> Text:
     """The grouped keybind cheat-sheet shown in the help overlay."""
     text = Text()
@@ -1306,6 +1317,8 @@ class DirPickerScreen(ModalScreen[None]):
             self._search_roots = [SearchRoot(self._cwd, label="current folder", source="current")]
         self._repo_metadata_cache: dict[str, DirRepoMetadata] = {}
         self._search_mode = False
+        self._browse_rows: list[DirBrowseRow] = []
+        self._active_browse_row = 0
         self._search_rows: list[ExplorerRow] = []
         self._active_row = 0
         self._selected_paths: set[str] = set()
@@ -1338,34 +1351,57 @@ class DirPickerScreen(ModalScreen[None]):
         listing = self.query_one("#dir-list", VerticalScroll)
         await listing.remove_children()
         if query is not None:
+            if query != self._query:
+                self._active_browse_row = 0
             self._query = query
         needle = self._query.strip().lower()
         if self._search_mode:
             await self._populate_search(listing, needle)
             return
-        rows: list[Static] = []
+        browse_rows: list[DirBrowseRow] = []
         parent = os.path.dirname(self._cwd)
         if parent and parent != self._cwd:
-            rows.append(Clickable("  ..", "dir_up", classes="dir-row", id="dir-up"))
+            browse_rows.append(DirBrowseRow("..", "dir_up", None, "dir-row", "dir-up"))
         for index, (label, path) in enumerate(self._quick_paths):
             if needle and needle not in label.lower() and needle not in path.lower():
                 continue
-            rows.append(
-                Clickable(
-                    f"  {label}: {path}",
+            browse_rows.append(
+                DirBrowseRow(
+                    f"{label}: {path}",
                     "dir_quick",
                     path,
-                    classes="dir-quick",
-                    id=f"dir-quick-{index}",
+                    "dir-quick",
+                    f"dir-quick-{index}",
                 )
             )
         for index, name in enumerate(subdirs):
             full = os.path.join(self._cwd, name)
             if needle and needle not in name.lower() and needle not in full.lower():
                 continue
-            rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
+            browse_rows.append(DirBrowseRow(f"{name}/", "dir_enter", full, "dir-row", f"dir-{index}"))
+        self._browse_rows = browse_rows
+        if self._active_browse_row >= len(self._browse_rows):
+            self._active_browse_row = max(0, len(self._browse_rows) - 1)
+        rows: list[Static] = []
+        for index, row in enumerate(self._browse_rows):
+            classes = row.classes
+            if index == self._active_browse_row:
+                classes += " dir-active"
+            rows.append(
+                Clickable(
+                    self._browse_row_text(row, index),
+                    row.action,
+                    row.arg,
+                    classes=classes,
+                    id=row.widget_id,
+                )
+            )
         await listing.mount(*rows)
         self._update_browse_footer()
+
+    def _browse_row_text(self, row: DirBrowseRow, index: int) -> Text:
+        cursor = ">" if index == self._active_browse_row else " "
+        return Text(f"{cursor} {row.label}")
 
     async def _populate_search(self, listing: VerticalScroll, needle: str) -> None:
         self._search_rows = search_workspace_rows(needle, self._search_roots)
@@ -1411,7 +1447,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._update_footer("search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel")
 
     def _update_browse_footer(self) -> None:
-        self._update_footer("ls/cd/pwd/open commands · ctrl+f search roots · alt+o open folder · esc cancel")
+        self._update_footer("↑/↓ move · Enter · Alt+O open · Ctrl+F search · ls/cd/pwd/open · Esc")
 
     def _update_footer(self, help_text: str) -> None:
         text = help_text
@@ -1495,12 +1531,14 @@ class DirPickerScreen(ModalScreen[None]):
         self._cwd = os.path.abspath(path)
         self._query = ""
         self._search_mode = False
+        self._active_browse_row = 0
         self._command_status = status
         self.query_one("#dir-jump", Input).value = ""
         self.run_worker(self._populate(), exclusive=True)
 
     def _clear_input_filter(self, *, status: str = "") -> None:
         self._query = ""
+        self._active_browse_row = 0
         self._command_status = status
         self.query_one("#dir-jump", Input).value = ""
         self.run_worker(self._populate(), exclusive=True)
@@ -1582,14 +1620,11 @@ class DirPickerScreen(ModalScreen[None]):
             self._on_select(self._cwd)
             self.dismiss()
         elif message.action == "dir_up":
-            self._cwd = os.path.dirname(self._cwd)
-            self.run_worker(self._populate(), exclusive=True)
+            self._enter_browse_path(os.path.dirname(self._cwd))
         elif message.action == "dir_quick" and message.arg and os.path.isdir(message.arg):
-            self._cwd = os.path.abspath(message.arg)
-            self.run_worker(self._populate(), exclusive=True)
+            self._enter_browse_path(message.arg)
         elif message.action == "dir_enter" and message.arg:
-            self._cwd = message.arg
-            self.run_worker(self._populate(), exclusive=True)
+            self._enter_browse_path(message.arg)
         elif message.action == "dir_search_focus" and message.arg:
             self._focus_search_path(message.arg)
             self.run_worker(self._populate(), exclusive=True)
@@ -1603,6 +1638,7 @@ class DirPickerScreen(ModalScreen[None]):
             return
         raw = event.value.strip()
         if not raw:
+            self._open_active_browse_row()
             return
         if self._handle_input_command(raw):
             return
@@ -1642,6 +1678,12 @@ class DirPickerScreen(ModalScreen[None]):
             event.prevent_default()
             self._on_select(os.path.abspath(self._cwd))
             self.dismiss()
+        elif not self._search_mode and event.key in ("up", "down"):
+            event.stop()
+            event.prevent_default()
+            delta = -1 if event.key == "up" else 1
+            self._move_active_browse_row(delta)
+            self.run_worker(self._populate(), exclusive=True)
         elif self._search_mode and event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
@@ -1658,6 +1700,34 @@ class DirPickerScreen(ModalScreen[None]):
     def _is_command_draft(value: str) -> bool:
         command = value.strip().split(" ", 1)[0].lower()
         return command in {"cd", "ls", "dir", "pwd", "open"}
+
+    def _enter_browse_path(self, path: str) -> None:
+        self._cwd = os.path.abspath(path)
+        self._query = ""
+        self._command_status = ""
+        self._active_browse_row = 0
+        self.query_one("#dir-jump", Input).value = ""
+        self.run_worker(self._populate(), exclusive=True)
+
+    def _move_active_browse_row(self, delta: int) -> None:
+        if not self._browse_rows:
+            self._active_browse_row = 0
+            return
+        self._active_browse_row = max(0, min(len(self._browse_rows) - 1, self._active_browse_row + delta))
+
+    def _open_active_browse_row(self) -> None:
+        row = self._active_browse_row_record()
+        if row is None:
+            return
+        if row.action == "dir_up":
+            self._enter_browse_path(os.path.dirname(self._cwd))
+        elif row.action in {"dir_quick", "dir_enter"} and row.arg and os.path.isdir(row.arg):
+            self._enter_browse_path(row.arg)
+
+    def _active_browse_row_record(self) -> DirBrowseRow | None:
+        if not self._browse_rows:
+            return None
+        return self._browse_rows[max(0, min(len(self._browse_rows) - 1, self._active_browse_row))]
 
     def _move_active_search_row(self, delta: int) -> None:
         if not self._search_rows:

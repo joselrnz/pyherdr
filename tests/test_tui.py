@@ -463,6 +463,67 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selected, [os.path.abspath(base)])
 
+    async def test_dir_picker_browse_mode_arrows_move_and_enter_opens_active_row(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        alpha = os.path.join(base, "alpha")
+        beta = os.path.join(base, "beta")
+        nested = os.path.join(alpha, "nested")
+        os.makedirs(nested)
+        os.makedirs(beta)
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append))
+            await pilot.pause()
+            listing = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("> ..", listing)
+
+            app.screen.on_key(self._key_event("down"))
+            await pilot.pause()
+            listing = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("> alpha/", listing)
+            self.assertIn("  beta/", listing)
+
+            app.screen.on_input_submitted(self._submit_event(""))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(alpha).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+            self.assertIn("nested/", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_key(self._key_event("up"))
+            await pilot.pause()
+            self.assertIn("> ..", self._screen_text(app.screen, "#dir-list"))
+            app.screen.on_input_submitted(self._submit_event(""))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(base).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+
+        self.assertEqual(selected, [])
+
+    async def test_dir_picker_browse_mode_enter_opens_active_quick_path(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        quick = tempfile.mkdtemp()
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append, quick_paths=[("repo root", quick)]))
+            await pilot.pause()
+            app.screen.on_key(self._key_event("down"))
+            await pilot.pause()
+            self.assertIn("> repo root:", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_input_submitted(self._submit_event(""))
+            await pilot.pause()
+            self.assertIn(os.path.abspath(quick).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+
+        self.assertEqual(selected, [])
+
     async def test_dir_picker_input_accepts_safe_navigation_commands(self):
         import os
         import tempfile

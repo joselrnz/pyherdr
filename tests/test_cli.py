@@ -41,7 +41,8 @@ class CliTests(unittest.TestCase):
         plain = html.unescape(svg).replace("\xa0", " ")
         self.assertIn("choose workspace folder", plain)
         self.assertIn("Open Folder", plain)
-        self.assertIn("ls/cd/pwd/open commands", plain)
+        self.assertIn("Enter", plain)
+        self.assertIn("ls/cd/pwd/open", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)
 

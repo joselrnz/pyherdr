@@ -156,7 +156,8 @@ The new-workspace folder picker starts from the active workspace and includes
 quick jumps for the workspace root, recent roots, git repo root, process cwd,
 and home. The current folder is shown in a boxed card beside an `Open Folder`
 action so the target is explicit. Typing in the picker filters child folders and quick roots;
-pressing Enter on a real path jumps there. The input also accepts safe explorer
+arrow keys move the highlighted row, and Enter follows the highlighted folder
+or quick root. Pressing Enter on a real path jumps there. The input also accepts safe explorer
 commands: `ls` refreshes, `ls text` filters, `cd path` changes folder, `pwd`
 prints the current path in the footer, and `open path` opens that folder. File
 paths resolve to their containing folder because the picker selects workspaces.
