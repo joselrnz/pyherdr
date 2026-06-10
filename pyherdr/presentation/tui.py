@@ -1245,13 +1245,15 @@ class DirPickerScreen(ModalScreen[None]):
         padding: 1 1;
     }
     #dir-current { height: auto; padding: 0 0 1 0; }
-    #dir-path { width: 1fr; color: $ph-subtext0; padding: 0 1; border: solid $ph-overlay0; }
+    #dir-path { width: 1fr; color: $ph-subtext0; padding: 0 1; }
     .dir-current-open {
         width: auto;
+        height: 1;
+        min-height: 1;
         color: $ph-green;
         text-style: bold;
-        padding: 1 1;
-        border: solid $ph-green;
+        padding: 0 1;
+        margin: 1 0 0 1;
     }
     .dir-current-open:hover { background: $ph-green; color: $ph-base; }
     #dir-list { height: auto; max-height: 16; }
