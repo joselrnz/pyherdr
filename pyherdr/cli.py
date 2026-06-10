@@ -140,7 +140,8 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_log.add_argument("--limit", type=int, default=50)
     workflow_graph = workflow_sub.add_parser("graph", help="print workflow graph")
     workflow_graph.add_argument("--limit", type=int, default=100)
-    workflow_graph.add_argument("--format", choices=["json", "mermaid"], default="json")
+    workflow_graph.add_argument("--format", choices=["json", "mermaid", "svg"], default="json")
+    workflow_graph.add_argument("--output", help="write graph to a file instead of stdout")
 
     schedule = sub.add_parser("schedule", help="cron-scheduled pane commands")
     schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
@@ -375,7 +376,15 @@ def run_notification(args) -> int:
 
 
 def run_workflow(args) -> int:
-    from .workflow import append_event, build_graph, event_to_dict, graph_to_mermaid, new_event, read_events
+    from .workflow import (
+        append_event,
+        build_graph,
+        event_to_dict,
+        graph_to_mermaid,
+        graph_to_svg,
+        new_event,
+        read_events,
+    )
 
     if args.workflow_command == "event":
         details: dict[str, str] = {}
@@ -407,9 +416,18 @@ def run_workflow(args) -> int:
     if args.workflow_command == "graph":
         graph = build_graph(read_events(limit=args.limit))
         if args.format == "mermaid":
-            print(graph_to_mermaid(graph))
+            output = graph_to_mermaid(graph)
+        elif args.format == "svg":
+            output = graph_to_svg(graph)
         else:
-            print(json.dumps(graph, indent=2))
+            output = json.dumps(graph, indent=2)
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output, encoding="utf-8")
+            print(output_path)
+        else:
+            print(output)
         return 0
     return 2
 

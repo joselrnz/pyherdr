@@ -8,6 +8,7 @@ from pyherdr.workflow import (
     build_graph,
     event_to_dict,
     graph_to_mermaid,
+    graph_to_svg,
     new_event,
     read_events,
     redact,
@@ -70,6 +71,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("WS-121", mermaid)
         self.assertIn("pane split", mermaid)
         self.assertIn("pane.split", mermaid)
+
+    def test_svg_export_is_a_visual_diagram(self):
+        event = new_event(
+            "api.request",
+            message="pane split",
+            worksite="WS-121",
+            source="tui",
+            target="pane.split",
+            status="done",
+        )
+
+        svg = graph_to_svg(build_graph([event]))
+
+        self.assertIn("<svg", svg)
+        self.assertIn("<rect", svg)
+        self.assertIn("<path", svg)
+        self.assertIn("WS-121", svg)
+        self.assertIn("pane split", svg)
+        self.assertIn("pane.split", svg)
 
     def test_event_dict_is_json_serializable_and_redacted(self):
         event = new_event("api.request", details={"token": "abc123", "method": "ping"})

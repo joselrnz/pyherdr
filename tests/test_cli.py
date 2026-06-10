@@ -12,6 +12,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workflow")
 
+    def test_workflow_graph_accepts_svg_output(self):
+        args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])
+
+        self.assertEqual(args.command, "workflow")
+        self.assertEqual(args.workflow_command, "graph")
+        self.assertEqual(args.format, "svg")
+        self.assertEqual(args.output, "graph.svg")
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")

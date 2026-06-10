@@ -453,7 +453,7 @@ class WorkflowScreen(ModalScreen[None]):
                 Static(self._render_body(), id="workflow-body"),
                 id="workflow-scroll",
             )
-            yield Static("esc to close · recent workflow events + Mermaid graph", id="workflow-foot")
+            yield Static("esc to close · visual graph + event log + Mermaid source", id="workflow-foot")
 
     def on_mount(self) -> None:
         self.query_one("#workflow-box", Vertical).border_title = "workflow graph + log"
@@ -462,17 +462,23 @@ class WorkflowScreen(ModalScreen[None]):
         palette = self._palette
         text = Text()
         events = self._events[-40:]
-        text.append("recent events\n", style=f"bold {palette.accent}")
         if not events:
+            text.append("visual graph\n", style=f"bold {palette.accent}")
+            text.append("(no events yet)\n", style=palette.subtext0)
+            text.append("\nrecent events\n", style=f"bold {palette.accent}")
             text.append("No workflow events recorded yet.\n", style=palette.subtext0)
             text.append(
                 "Events appear here as the server, CLI, and agents emit workflow audit entries.\n",
                 style=palette.overlay0,
             )
-            text.append("\ncall graph\n", style=f"bold {palette.accent}")
+            text.append("\nMermaid source\n", style=f"bold {palette.accent}")
             text.append("flowchart TD\n", style=palette.subtext0)
             return text
 
+        text.append("visual graph\n", style=f"bold {palette.accent}")
+        self._append_visual_graph(text, events)
+
+        text.append("\nrecent events\n", style=f"bold {palette.accent}")
         for event in reversed(events[-12:]):
             stamp = time.strftime("%H:%M:%S", time.localtime(event.timestamp))
             status = event.status or event.kind
@@ -489,7 +495,7 @@ class WorkflowScreen(ModalScreen[None]):
         graph = build_graph(events)
         mermaid = graph_to_mermaid(graph)
         graph_lines = mermaid.splitlines()
-        text.append("\ncall graph\n", style=f"bold {palette.accent}")
+        text.append("\nMermaid source\n", style=f"bold {palette.accent}")
         for line in graph_lines[:80]:
             text.append(line + "\n", style=palette.subtext0)
         if len(graph_lines) > 80:
@@ -498,6 +504,33 @@ class WorkflowScreen(ModalScreen[None]):
                 style=palette.overlay0,
             )
         return text
+
+    def _append_visual_graph(self, text: Text, events: list[WorkflowEvent]) -> None:
+        recent = events[-12:]
+        grouped: dict[str, list[WorkflowEvent]] = {}
+        for event in recent:
+            grouped.setdefault(event.worksite or "unassigned", []).append(event)
+
+        for worksite, group in grouped.items():
+            text.append(f"{worksite}\n", style=f"bold {self._palette.blue}")
+            for event in group:
+                source = event.source or event.agent or event.pane_id or "event"
+                target = event.target or event.status or "result"
+                status = event.status or event.kind
+                text.append("  ")
+                text.append(source, style=self._palette.teal)
+                text.append(" -> ", style=self._palette.overlay0)
+                text.append(event.kind, style=f"bold {self._palette.text}")
+                text.append(" -> ", style=self._palette.overlay0)
+                text.append(target, style=self._palette.teal)
+                text.append("  [", style=self._palette.overlay0)
+                text.append(status, style=self._status_color(status))
+                text.append("]\n", style=self._palette.overlay0)
+                if event.message:
+                    text.append(f"      {event.message}\n", style=self._palette.text)
+                context = self._event_context(event)
+                if context:
+                    text.append(f"      {context}\n", style=self._palette.overlay0)
 
     def _status_color(self, status: str) -> str:
         lowered = status.lower()

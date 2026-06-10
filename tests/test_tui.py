@@ -360,7 +360,10 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, WorkflowScreen)
             body = app.screen._render_body().plain
+            self.assertIn("visual graph", body)
+            self.assertIn("tui -> api.request -> server", body)
             self.assertIn("pane read", body)
+            self.assertIn("Mermaid source", body)
             self.assertIn("flowchart TD", body)
             self.assertIn("WS-121", body)
 
