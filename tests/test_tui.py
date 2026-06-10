@@ -11,7 +11,9 @@ from pyherdr.presentation.tui import (
     RenameScreen,
     ShellPickerScreen,
     ThemeScreen,
+    WorkflowScreen,
 )
+from pyherdr.workflow import new_event
 
 STATE = {
     "focused_workspace_id": "ws1",
@@ -337,6 +339,30 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             workflow = app._workflow_text().plain
             self.assertIn("workflow", workflow)
             self.assertIn("calls  logs  graph", workflow)
+
+    async def test_workflow_view_opens_graph_and_log_screen(self):
+        event = new_event(
+            "api.request",
+            message="pane read",
+            source="tui",
+            target="server",
+            worksite="WS-121",
+            agent="codex",
+            pane_id="1-1",
+            status="done",
+            timestamp=1,
+        )
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app._workflow_events = lambda: [event]  # type: ignore[method-assign]
+        async with app.run_test(size=(110, 34)) as pilot:
+            await pilot.pause()
+            app._dispatch_activated("workflow_view", None)
+            await pilot.pause()
+            self.assertIsInstance(app.screen, WorkflowScreen)
+            body = app.screen._render_body().plain
+            self.assertIn("pane read", body)
+            self.assertIn("flowchart TD", body)
+            self.assertIn("WS-121", body)
 
     async def test_prefix_then_g_navigator_jumps(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)

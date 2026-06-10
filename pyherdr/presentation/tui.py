@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -35,6 +36,7 @@ from textual.widgets import Input, Static
 from ..config import load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
+from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from .client import PaneClient, ServerClient
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
@@ -417,6 +419,117 @@ class StatsScreen(ModalScreen[None]):
     def on_key(self, event: events.Key) -> None:
         if event.key in ("escape", "enter", "q"):
             self.dismiss()
+        event.stop()
+
+
+class WorkflowScreen(ModalScreen[None]):
+    """Recent workflow events plus a compact call-flow graph."""
+
+    DEFAULT_CSS = """
+    WorkflowScreen { align: center middle; background: $ph-base 70%; }
+    #workflow-box {
+        width: 104;
+        max-width: 96%;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        color: $ph-text;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 2;
+    }
+    #workflow-scroll { height: auto; max-height: 80%; }
+    #workflow-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, events: list[WorkflowEvent], palette: Palette) -> None:
+        super().__init__()
+        self._events = events
+        self._palette = palette
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="workflow-box"):
+            yield VerticalScroll(
+                Static(self._render_body(), id="workflow-body"),
+                id="workflow-scroll",
+            )
+            yield Static("esc to close · recent workflow events + Mermaid graph", id="workflow-foot")
+
+    def on_mount(self) -> None:
+        self.query_one("#workflow-box", Vertical).border_title = "workflow graph + log"
+
+    def _render_body(self) -> Text:
+        palette = self._palette
+        text = Text()
+        events = self._events[-40:]
+        text.append("recent events\n", style=f"bold {palette.accent}")
+        if not events:
+            text.append("No workflow events recorded yet.\n", style=palette.subtext0)
+            text.append(
+                "Events appear here as the server, CLI, and agents emit workflow audit entries.\n",
+                style=palette.overlay0,
+            )
+            text.append("\ncall graph\n", style=f"bold {palette.accent}")
+            text.append("flowchart TD\n", style=palette.subtext0)
+            return text
+
+        for event in reversed(events[-12:]):
+            stamp = time.strftime("%H:%M:%S", time.localtime(event.timestamp))
+            status = event.status or event.kind
+            status_color = self._status_color(status)
+            text.append(f"{stamp}  ", style=palette.overlay0)
+            text.append(f"{event.kind:<14}", style=palette.blue)
+            text.append(f"{status:<10}", style=status_color)
+            text.append(event.message or "(no message)", style=palette.text)
+            context = self._event_context(event)
+            if context:
+                text.append(f"\n    {context}", style=palette.overlay0)
+            text.append("\n")
+
+        graph = build_graph(events)
+        mermaid = graph_to_mermaid(graph)
+        graph_lines = mermaid.splitlines()
+        text.append("\ncall graph\n", style=f"bold {palette.accent}")
+        for line in graph_lines[:80]:
+            text.append(line + "\n", style=palette.subtext0)
+        if len(graph_lines) > 80:
+            text.append(
+                "... graph truncated in view; export full graph with pyherdr workflow graph\n",
+                style=palette.overlay0,
+            )
+        return text
+
+    def _status_color(self, status: str) -> str:
+        lowered = status.lower()
+        if lowered in ("blocked", "error", "failed", "unauthorized"):
+            return self._palette.red
+        if lowered in ("working", "request", "pending"):
+            return self._palette.yellow
+        if lowered in ("done", "ok", "success", "response"):
+            return self._palette.green
+        return self._palette.subtext0
+
+    @staticmethod
+    def _event_context(event: WorkflowEvent) -> str:
+        parts = []
+        if event.worksite:
+            parts.append(f"worksite={event.worksite}")
+        if event.agent:
+            parts.append(f"agent={event.agent}")
+        if event.pane_id:
+            parts.append(f"pane={event.pane_id}")
+        if event.source or event.target:
+            parts.append(f"{event.source or '?'} -> {event.target or '?'}")
+        if event.artifacts:
+            parts.append("artifacts=" + ", ".join(event.artifacts[:3]))
+        return " · ".join(parts)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "enter", "q"):
+            self.dismiss()
+        event.stop()
+
+    def on_click(self, event: events.Click) -> None:
         event.stop()
 
 
@@ -1211,6 +1324,8 @@ class PyHerdrTui(App):
             self._copy_pane_output(self._pane_id)
         elif action == "resource_monitor":
             self._open_stats("resource monitor · all sessions", None)
+        elif action == "workflow_view":
+            self._open_workflow_view()
         elif action in ("quit", "detach"):
             # Detach == leave the TUI; the background server keeps every pane
             # running, so reopening `pyherdr tui` re-attaches to them.
@@ -1322,6 +1437,8 @@ class PyHerdrTui(App):
             self._open_stats("resource usage · workspace", self._workspace_pane_ids(arg))
         elif action == "resource_monitor":
             self._open_stats("resource monitor · all sessions", None)
+        elif action == "workflow_view":
+            self._open_workflow_view()
         elif action in (
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace",
@@ -1371,6 +1488,15 @@ class PyHerdrTui(App):
     def _open_stats(self, title: str, pane_ids: list[str] | None) -> None:
         self.push_screen(StatsScreen(title, self._client, self._palette, self._pane_label_map(), pane_ids))
 
+    def _workflow_events(self) -> list[WorkflowEvent]:
+        try:
+            return read_events(limit=80)
+        except Exception:
+            return []
+
+    def _open_workflow_view(self) -> None:
+        self.push_screen(WorkflowScreen(self._workflow_events(), self._palette))
+
     _PALETTE_ACTIONS = [
         ("New tab", "new_tab"),
         ("Split pane right", "split_sbs"),
@@ -1393,6 +1519,7 @@ class PyHerdrTui(App):
         ("Jump to pane…", "goto"),
         ("Pane menu…", "pane_menu"),
         ("Resource monitor (CPU/RAM)…", "resource_monitor"),
+        ("Workflow graph + log…", "workflow_view"),
         ("Keybindings help", "help"),
         ("Detach (keep panes running)", "detach"),
         ("Quit", "quit"),
@@ -1902,7 +2029,7 @@ class PyHerdrTui(App):
         widgets.append(Static("", classes="navgap"))
         widgets.append(Clickable("＋ workspace", "new_workspace", id="newws", classes="newterm"))
         widgets.append(Clickable("＋ new terminal ▾", "open_shell_picker", id="newterm", classes="newterm"))
-        widgets.append(Static(self._workflow_text(), id="workflow", classes="workflow"))
+        widgets.append(Clickable(self._workflow_text(), "workflow_view", id="workflow", classes="workflow"))
         widgets.append(Static(self._agents_text(), id="agents", classes="agents"))
         await nav.mount(*widgets)
 

@@ -4,7 +4,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from .presentation.tui import PyHerdrTui
+from .presentation.tui import PyHerdrTui, WorkflowScreen
+from .workflow import new_event
 
 DEMO_STATE: dict[str, Any] = {
     "focused_workspace_id": "ws-main",
@@ -136,6 +137,47 @@ This screenshot is a reproducible demo render.
 """,
 }
 
+DEMO_WORKFLOW_EVENTS = [
+    new_event(
+        "api.request",
+        message="pane read",
+        source="tui",
+        target="server",
+        worksite="WS-121",
+        agent="codex",
+        pane_id="pane-loop",
+        status="done",
+        event_id="demo-workflow-1",
+        timestamp=1_786_240_800.0,
+    ),
+    new_event(
+        "agent.status",
+        message="approval gate blocked",
+        source="claude",
+        target="main",
+        worksite="WS-121",
+        agent="claude",
+        pane_id="pane-review",
+        status="blocked",
+        artifacts=["workflow.mmd"],
+        event_id="demo-workflow-2",
+        timestamp=1_786_240_860.0,
+    ),
+    new_event(
+        "validation",
+        message="ruff mypy unittest passed",
+        source="codex",
+        target="ci",
+        worksite="WS-089",
+        agent="codex",
+        pane_id="pane-tests",
+        status="done",
+        artifacts=["validation.log"],
+        event_id="demo-workflow-3",
+        timestamp=1_786_240_920.0,
+    ),
+]
+
 
 class DemoScreenshotClient:
     """PaneClient implementation that feeds the TUI a deterministic demo state."""
@@ -211,16 +253,22 @@ class DemoScreenshotClient:
         return {"result": {"type": "tab_moved"}}
 
 
-async def _render(path: Path, width: int, height: int) -> Path:
+async def _render(path: Path, width: int, height: int, view: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     app = PyHerdrTui(client=DemoScreenshotClient(), poll_interval=100)
     async with app.run_test(size=(width, height)) as pilot:
         await pilot.pause(0.5)
+        if view == "workflow":
+            app.push_screen(WorkflowScreen(DEMO_WORKFLOW_EVENTS, app._palette))
+            await pilot.pause(0.5)
         path.write_text(app.export_screenshot(title="PyHerdr demo TUI", simplify=False), encoding="utf-8")
     return path
 
 
-def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38) -> Path:
+def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38, view: str = "main") -> Path:
     """Render the real Textual TUI with deterministic demo data to an SVG file."""
 
-    return asyncio.run(_render(path, width, height))
+    normalized = view.strip().lower()
+    if normalized not in ("main", "workflow"):
+        raise ValueError(f"unknown demo screenshot view: {view}")
+    return asyncio.run(_render(path, width, height, normalized))

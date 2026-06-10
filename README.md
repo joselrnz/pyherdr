@@ -100,10 +100,11 @@ text is seeded demo data; this command does not launch live agents.
 
 ```bash
 python -m pyherdr demo-screenshot --output pyherdr-demo.svg
+python -m pyherdr demo-screenshot --view workflow --output pyherdr-workflow.svg
 ```
 
-Open `pyherdr-demo.svg` in a browser to inspect it. To test the live product
-with real PTY panes and the background server, run:
+Open the SVG in a browser to inspect it. To test the live product with real PTY
+panes and the background server, run:
 
 ```bash
 python -m pyherdr tui

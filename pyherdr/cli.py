@@ -92,6 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_screenshot.add_argument("--output", default="pyherdr-demo.svg", help="SVG file to write")
     demo_screenshot.add_argument("--width", type=int, default=132, help="terminal columns")
     demo_screenshot.add_argument("--height", type=int, default=38, help="terminal rows")
+    demo_screenshot.add_argument("--view", choices=["main", "workflow"], default="main", help="demo view to render")
     sub.add_parser("version", help="print version")
     sub.add_parser("status", help="show Python server and saved session status")
 
@@ -328,7 +329,7 @@ def print_status() -> int:
 def run_demo_screenshot(args) -> int:
     from .demo_screenshot import render_demo_screenshot
 
-    output = render_demo_screenshot(Path(args.output), width=args.width, height=args.height)
+    output = render_demo_screenshot(Path(args.output), width=args.width, height=args.height, view=args.view)
     print(output)
     return 0
 
