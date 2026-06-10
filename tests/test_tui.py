@@ -16,7 +16,7 @@ from pyherdr.presentation.tui import (
 )
 from pyherdr.workflow import new_event
 from pyherdr.workspace_recents import record_workspace_recent
-from pyherdr.workspace_search import SearchRoot
+from pyherdr.workspace_search import ExplorerRow, SearchRoot
 
 STATE = {
     "focused_workspace_id": "ws1",
@@ -609,6 +609,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     root,
                     selected.append,
                     search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
                 )
             )
             await pilot.pause()
@@ -644,6 +645,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     root,
                     selected.append,
                     search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
                 )
             )
             await pilot.pause()
@@ -654,6 +656,129 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
         self.assertEqual(selected, [os.path.abspath(alpha)])
+
+    async def test_dir_picker_search_mode_loads_results_from_worker(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        alpha = os.path.join(root, "alpha-app")
+        os.makedirs(os.path.join(alpha, ".git"))
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    selected.append,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0.05,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            self.assertIn("searching roots for alpha", self._screen_text(app.screen, "#dir-list"))
+
+            await pilot.pause(0.2)
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("alpha-app", text)
+            self.assertNotIn("searching roots", text)
+
+        self.assertEqual(selected, [])
+
+    async def test_dir_picker_search_mode_reuses_cached_query_results(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        root = tempfile.mkdtemp()
+        row = ExplorerRow(
+            row_id=f"repo:{root}",
+            kind="repo",
+            label="alpha-app",
+            path=os.path.abspath(root),
+            score=1000,
+            source="workspace",
+            repo_root=os.path.abspath(root),
+        )
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        with patch("pyherdr.presentation.tui.search_workspace_rows", return_value=[row]) as search:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.push_screen(
+                    DirPickerScreen(
+                        root,
+                        selected.append,
+                        search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                        search_debounce=0,
+                    )
+                )
+                await pilot.pause()
+                app.screen.on_key(self._key_event("ctrl+f"))
+                await app.screen.on_input_changed(self._changed_event("alpha"))
+                await pilot.pause(0.2)
+                self.assertIn("alpha-app", self._screen_text(app.screen, "#dir-list"))
+
+                await app.screen.on_input_changed(self._changed_event("alpha"))
+                await pilot.pause(0.2)
+                self.assertIn("alpha-app", self._screen_text(app.screen, "#dir-list"))
+
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(selected, [])
+
+    async def test_dir_picker_search_mode_ignores_stale_worker_results(self):
+        import os
+        import tempfile
+        import time
+        from unittest.mock import patch
+
+        root = tempfile.mkdtemp()
+        alpha_row = ExplorerRow(
+            row_id=f"repo:{root}:alpha",
+            kind="repo",
+            label="alpha-app",
+            path=os.path.join(root, "alpha-app"),
+            score=1000,
+            source="workspace",
+        )
+        beta_row = ExplorerRow(
+            row_id=f"repo:{root}:beta",
+            kind="repo",
+            label="beta-tool",
+            path=os.path.join(root, "beta-tool"),
+            score=1000,
+            source="workspace",
+        )
+
+        def fake_search(query: str, _roots: object) -> list[ExplorerRow]:
+            time.sleep(0.2 if query == "alpha" else 0.01)
+            return [alpha_row] if query == "alpha" else [beta_row]
+
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        with patch("pyherdr.presentation.tui.search_workspace_rows", side_effect=fake_search):
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.push_screen(
+                    DirPickerScreen(
+                        root,
+                        lambda path: None,
+                        search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                        search_debounce=0,
+                    )
+                )
+                await pilot.pause()
+                app.screen.on_key(self._key_event("ctrl+f"))
+                await app.screen.on_input_changed(self._changed_event("alpha"))
+                await pilot.pause(0.05)
+                await app.screen.on_input_changed(self._changed_event("beta"))
+                await pilot.pause(0.4)
+
+                text = self._screen_text(app.screen, "#dir-list")
+                self.assertIn("beta-tool", text)
+                self.assertNotIn("alpha-app", text)
 
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []

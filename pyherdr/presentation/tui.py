@@ -296,6 +296,9 @@ class DirBrowseRow:
     widget_id: str | None = None
 
 
+SearchCacheKey = tuple[str, tuple[tuple[str, str, str], ...]]
+
+
 def _help_text(palette: Palette) -> Text:
     """The grouped keybind cheat-sheet shown in the help overlay."""
     text = Text()
@@ -1307,6 +1310,7 @@ class DirPickerScreen(ModalScreen[None]):
         *,
         quick_paths: list[tuple[str, str]] | None = None,
         search_roots: list[SearchRoot] | None = None,
+        search_debounce: float = 0.08,
     ) -> None:
         super().__init__()
         self._cwd = os.path.abspath(start or os.getcwd())
@@ -1320,6 +1324,10 @@ class DirPickerScreen(ModalScreen[None]):
         self._browse_rows: list[DirBrowseRow] = []
         self._active_browse_row = 0
         self._search_rows: list[ExplorerRow] = []
+        self._search_cache: dict[SearchCacheKey, list[ExplorerRow]] = {}
+        self._pending_search_key: SearchCacheKey | None = None
+        self._search_revision = 0
+        self._search_debounce = max(0.0, search_debounce)
         self._active_row = 0
         self._selected_paths: set[str] = set()
         self._query = ""
@@ -1404,18 +1412,31 @@ class DirPickerScreen(ModalScreen[None]):
         return Text(f"{cursor} {row.label}")
 
     async def _populate_search(self, listing: VerticalScroll, needle: str) -> None:
-        self._search_rows = search_workspace_rows(needle, self._search_roots)
-        if self._active_row >= len(self._search_rows):
-            self._active_row = max(0, len(self._search_rows) - 1)
         if not needle:
+            self._search_rows = []
+            self._pending_search_key = None
             await listing.mount(Static("  type to search configured roots", classes="dir-row"))
             self._update_search_footer()
             return
+        cache_key = self._search_cache_key(needle)
+        cached = self._search_cache.get(cache_key)
+        if cached is None:
+            self._search_rows = []
+            await listing.mount(Static(f"  searching roots for {needle}", classes="dir-row"))
+            self._start_search_worker(needle, cache_key)
+            self._update_search_footer()
+            return
+        await self._mount_search_rows(listing, cached)
+
+    async def _mount_search_rows(self, listing: VerticalScroll, rows: list[ExplorerRow]) -> None:
+        self._search_rows = rows
+        if self._active_row >= len(self._search_rows):
+            self._active_row = max(0, len(self._search_rows) - 1)
         if not self._search_rows:
             await listing.mount(Static("  no matching folders or repos", classes="dir-row"))
             self._update_search_footer()
             return
-        rows: list[Static] = []
+        row_widgets: list[Static] = []
         for index, row in enumerate(self._search_rows):
             classes = "dir-search"
             if index == self._active_row:
@@ -1424,7 +1445,7 @@ class DirPickerScreen(ModalScreen[None]):
                 classes += " dir-selected"
             if row.stale:
                 classes += " dir-stale"
-            rows.append(
+            row_widgets.append(
                 Clickable(
                     self._search_row_text(row, index),
                     "dir_search_focus",
@@ -1433,8 +1454,39 @@ class DirPickerScreen(ModalScreen[None]):
                     dbl_action="dir_search_open",
                 )
             )
-        await listing.mount(*rows)
+        await listing.mount(*row_widgets)
         self._update_search_footer()
+
+    def _start_search_worker(self, needle: str, cache_key: SearchCacheKey) -> None:
+        if self._pending_search_key == cache_key:
+            return
+        self._search_revision += 1
+        revision = self._search_revision
+        self._pending_search_key = cache_key
+        self.run_worker(
+            self._run_search_worker(needle, cache_key, revision),
+            group="dir-search",
+            exclusive=True,
+        )
+
+    async def _run_search_worker(self, needle: str, cache_key: SearchCacheKey, revision: int) -> None:
+        try:
+            if self._search_debounce:
+                await asyncio.sleep(self._search_debounce)
+            rows = await asyncio.to_thread(search_workspace_rows, needle, list(self._search_roots))
+        except asyncio.CancelledError:
+            if self._pending_search_key == cache_key:
+                self._pending_search_key = None
+            raise
+        self._search_cache[cache_key] = rows
+        if self._pending_search_key == cache_key:
+            self._pending_search_key = None
+        if revision != self._search_revision or not self._search_mode or self._query.strip().lower() != needle:
+            return
+        await self._populate()
+
+    def _search_cache_key(self, needle: str) -> SearchCacheKey:
+        return (needle, tuple((root.path, root.label, root.source) for root in self._search_roots))
 
     def _search_row_text(self, row: ExplorerRow, index: int) -> Text:
         cursor = ">" if index == self._active_row else " "
@@ -1671,6 +1723,8 @@ class DirPickerScreen(ModalScreen[None]):
             event.stop()
             event.prevent_default()
             self._search_mode = False
+            self._search_revision += 1
+            self._pending_search_key = None
             self._update_browse_footer()
             self.run_worker(self._populate(), exclusive=True)
         elif event.key in ("alt+o", "ctrl+enter"):

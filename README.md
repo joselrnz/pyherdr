@@ -163,7 +163,9 @@ prints the current path in the footer, and `open path` opens that folder. File
 paths resolve to their containing folder because the picker selects workspaces.
 Press `ctrl+f` inside the picker to search known workspace roots and recent
 repositories, then use arrow keys, Space, Enter, or mouse double-click to select
-and open a result.
+and open a result. Search runs through a debounced background worker, shows a
+temporary searching row, ignores stale results from older queries, and reuses
+cached rows when the same query is typed again.
 
 ## 🧰 CLI
 
