@@ -150,6 +150,8 @@ Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
 **Mouse:** click tabs/panes, drag a divider to resize, right-click panes, tabs,
 or workspace rows for context menus (including *resource usage*). The bottom **action bar** has clickable
 buttons for help, palette, new tab, split, terminal, stats, theme, detach, quit.
+The new-workspace folder picker starts from the active workspace and includes
+quick jumps for the workspace root, git repo root, process cwd, and home.
 
 ## 🧰 CLI
 

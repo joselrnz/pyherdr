@@ -175,6 +175,21 @@ def _git_branch(cwd: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _git_root(cwd: str) -> str:
+    """Best-effort git repository root for a cwd (empty if none)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return os.path.abspath(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else ""
+
+
 def _git_ahead_behind(cwd: str) -> tuple[int, int]:
     """Return ``(ahead, behind)`` commit counts vs the upstream, or ``(0, 0)``."""
     try:
@@ -1206,15 +1221,24 @@ class DirPickerScreen(ModalScreen[None]):
     #dir-list { height: auto; max-height: 16; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
+    .dir-quick { width: 1fr; color: $ph-blue; padding: 0 1; }
+    .dir-quick:hover { background: $ph-surface0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
     #dir-foot { color: $ph-subtext0; padding: 1 0 0 0; }
     """
 
-    def __init__(self, start: str, on_select: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        start: str,
+        on_select: Callable[[str], None],
+        *,
+        quick_paths: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__()
         self._cwd = os.path.abspath(start or os.getcwd())
         self._on_select = on_select
+        self._quick_paths = self._normalize_quick_paths(quick_paths or [])
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
@@ -1235,10 +1259,32 @@ class DirPickerScreen(ModalScreen[None]):
         parent = os.path.dirname(self._cwd)
         if parent and parent != self._cwd:
             rows.append(Clickable("  ..", "dir_up", classes="dir-row", id="dir-up"))
+        for index, (label, path) in enumerate(self._quick_paths):
+            rows.append(
+                Clickable(
+                    f"  {label}: {path}",
+                    "dir_quick",
+                    path,
+                    classes="dir-quick",
+                    id=f"dir-quick-{index}",
+                )
+            )
         for index, name in enumerate(self._subdirs()):
             full = os.path.join(self._cwd, name)
             rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
         await listing.mount(*rows)
+
+    @staticmethod
+    def _normalize_quick_paths(paths: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        normalized: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for label, raw_path in paths:
+            path = os.path.abspath(os.path.expanduser(raw_path.strip()))
+            if not label.strip() or not os.path.isdir(path) or path in seen:
+                continue
+            seen.add(path)
+            normalized.append((label.strip(), path))
+        return normalized
 
     def _subdirs(self) -> list[str]:
         try:
@@ -1254,6 +1300,9 @@ class DirPickerScreen(ModalScreen[None]):
             self.dismiss()
         elif message.action == "dir_up":
             self._cwd = os.path.dirname(self._cwd)
+            self.run_worker(self._populate())
+        elif message.action == "dir_quick" and message.arg and os.path.isdir(message.arg):
+            self._cwd = os.path.abspath(message.arg)
             self.run_worker(self._populate())
         elif message.action == "dir_enter" and message.arg:
             self._cwd = message.arg
@@ -1918,7 +1967,30 @@ class PyHerdrTui(App):
 
     def _open_new_workspace(self) -> None:
         """Browse for a directory, then open a new workspace rooted there."""
-        self.push_screen(DirPickerScreen(os.getcwd(), self._create_workspace_at))
+        self.push_screen(
+            DirPickerScreen(
+                self._workspace_picker_start(),
+                self._create_workspace_at,
+                quick_paths=self._workspace_picker_quick_paths(),
+            )
+        )
+
+    def _workspace_picker_start(self) -> str:
+        workspace = self._focused_workspace()
+        cwd = str(workspace.get("cwd") or "") if workspace else ""
+        if cwd and os.path.isdir(os.path.expanduser(cwd)):
+            return os.path.abspath(os.path.expanduser(cwd))
+        return os.getcwd()
+
+    def _workspace_picker_quick_paths(self) -> list[tuple[str, str]]:
+        start = self._workspace_picker_start()
+        paths = [("current workspace", start)]
+        repo_root = _git_root(start)
+        if repo_root:
+            paths.append(("repo root", repo_root))
+        paths.append(("process cwd", os.getcwd()))
+        paths.append(("home", os.path.expanduser("~")))
+        return paths
 
     def _create_workspace_at(self, path: str) -> None:
         target = os.path.expanduser(path.strip())

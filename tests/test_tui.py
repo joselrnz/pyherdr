@@ -337,6 +337,25 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(selected, [child])
 
+    async def test_dir_picker_quick_path_jumps_to_known_folder(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        quick = tempfile.mkdtemp()
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, selected.append, quick_paths=[("repo root", quick)]))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, DirPickerScreen)
+            app.screen.on_activated(self._activated("dir_quick", quick))
+            await pilot.pause()
+            app.screen.on_activated(self._activated("dir_open", None))
+            await pilot.pause()
+            self.assertEqual(selected, [os.path.abspath(quick)])
+
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
@@ -546,6 +565,29 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app.screen.on_activated(self._activated("dir_open", None))  # open the starting folder
             await pilot.pause()
             self.assertTrue(client.created_workspaces)
+
+    async def test_new_workspace_picker_starts_from_focused_workspace_cwd(self):
+        import os
+        import tempfile
+
+        workspace_cwd = tempfile.mkdtemp()
+        state = {
+            "focused_workspace_id": "wsx",
+            "workspaces": [
+                {
+                    "id": "wsx",
+                    "label": "project",
+                    "cwd": workspace_cwd,
+                    "focused_tab_id": "tx",
+                    "tabs": [{"id": "tx", "focused_pane_id": "px", "panes": [{"id": "px", "running": True}]}],
+                }
+            ],
+        }
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app._state = state
+        app._workspace_id = "wsx"
+
+        self.assertEqual(app._workspace_picker_start(), os.path.abspath(workspace_cwd))
 
     async def test_move_workspace_up_down(self):
         client = FakeClient()
