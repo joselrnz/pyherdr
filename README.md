@@ -163,7 +163,10 @@ prints the current path in the footer, and `open path` opens that folder. File
 paths resolve to their containing folder because the picker selects workspaces.
 Press `ctrl+f` inside the picker to search known workspace roots and recent
 repositories, then use arrow keys, Space, Enter, or mouse double-click to select
-and open a result. Search runs through a debounced background worker, shows a
+and open a result. Search rows show their source, repo-root status, child-folder
+count, stale marker, and full path on a second line. Press `p` on a search result
+to jump to its parent folder, or `delete` on a stale result to hide it from the
+current search cache. Search runs through a debounced background worker, shows a
 temporary searching row, ignores stale results from older queries, and reuses
 cached rows when the same query is typed again.
 

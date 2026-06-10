@@ -1530,11 +1530,34 @@ class DirPickerScreen(ModalScreen[None]):
         cursor = ">" if index == self._active_row else " "
         selected = "[x]" if row.path in self._selected_paths else "[ ]"
         kind = "repo" if row.kind == "repo" else ("stale" if row.stale else "dir")
-        detail = row.path.replace("\\", "/")
-        return Text(f"{cursor} {selected} {kind:<5} {row.label}  {detail}")
+        facts = self._search_row_facts(row)
+        detail = self._display_path(row.path)
+        text = Text(f"{cursor} {selected} {kind:<5} {row.label}")
+        if facts:
+            text.append(f"  {' · '.join(facts)}", style="dim")
+        text.append(f"\n    {detail}", style="dim")
+        return text
+
+    def _search_row_facts(self, row: ExplorerRow) -> list[str]:
+        facts: list[str] = []
+        if row.source:
+            facts.append(row.source)
+        if row.repo_root:
+            if os.path.normcase(os.path.abspath(row.repo_root)) == os.path.normcase(os.path.abspath(row.path)):
+                facts.append("repo root")
+            else:
+                facts.append(f"repo {os.path.basename(row.repo_root) or row.repo_root}")
+        if row.child_count:
+            facts.append(self._folder_count_text(row.child_count))
+        if row.stale:
+            facts.append("stale")
+        return facts
 
     def _update_search_footer(self) -> None:
-        self._update_footer("search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel")
+        self._update_footer(
+            "search mode · ↑/↓ move · space select · enter open · p parent · "
+            "delete hide stale · ctrl+l path mode · esc cancel"
+        )
 
     def _update_browse_footer(self) -> None:
         self._update_footer("↑/↓ move · Enter · Alt+O open · Ctrl+F search · ls/cd/pwd/open · Esc")
@@ -1787,6 +1810,14 @@ class DirPickerScreen(ModalScreen[None]):
             event.prevent_default()
             self._toggle_active_search_row()
             self.run_worker(self._populate(), exclusive=True)
+        elif self._search_mode and event.key in {"p", "ctrl+p"}:
+            event.stop()
+            event.prevent_default()
+            self._open_active_search_parent()
+        elif self._search_mode and event.key == "delete":
+            event.stop()
+            event.prevent_default()
+            self._hide_active_stale_search_row()
 
     @staticmethod
     def _is_command_draft(value: str) -> bool:
@@ -1840,6 +1871,37 @@ class DirPickerScreen(ModalScreen[None]):
         row = self._active_search_row()
         if row is not None:
             self._open_search_path(row.path)
+
+    def _open_active_search_parent(self) -> None:
+        row = self._active_search_row()
+        if row is None:
+            return
+        parent = os.path.dirname(os.path.abspath(row.path))
+        if not parent or parent == os.path.abspath(row.path) or not os.path.isdir(parent):
+            self._command_status = f"parent: not available for {self._display_path(row.path)}"
+            self.run_worker(self._populate(), exclusive=True)
+            return
+        self._set_cwd(parent, status=f"parent: {self._display_path(parent)}")
+
+    def _hide_active_stale_search_row(self) -> None:
+        row = self._active_search_row()
+        if row is None:
+            return
+        if not row.stale:
+            self._command_status = "delete: only stale search rows can be hidden"
+            self.run_worker(self._populate(), exclusive=True)
+            return
+        row_id = row.row_id
+        self._selected_paths.discard(row.path)
+        self._search_rows = [candidate for candidate in self._search_rows if candidate.row_id != row_id]
+        for cache_key, (cached_at, rows) in list(self._search_cache.items()):
+            filtered = [candidate for candidate in rows if candidate.row_id != row_id]
+            if len(filtered) != len(rows):
+                self._search_cache[cache_key] = (cached_at, filtered)
+        if self._active_row >= len(self._search_rows):
+            self._active_row = max(0, len(self._search_rows) - 1)
+        self._command_status = f"hidden stale root: {self._display_path(row.path)}"
+        self.run_worker(self._populate(), exclusive=True)
 
     def _active_search_row(self) -> ExplorerRow | None:
         if not self._search_rows:

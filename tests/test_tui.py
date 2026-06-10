@@ -780,6 +780,99 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("beta-tool", text)
                 self.assertNotIn("alpha-app", text)
 
+    def test_dir_picker_search_row_text_includes_metadata(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        child = os.path.join(root, "src")
+        os.makedirs(child)
+        row = ExplorerRow(
+            row_id=f"repo:{root}",
+            kind="repo",
+            label="alpha-app",
+            path=os.path.abspath(root),
+            score=1000,
+            source="recent",
+            repo_root=os.path.abspath(root),
+            child_count=1,
+        )
+        screen = DirPickerScreen(root, lambda path: None)
+        plain = screen._search_row_text(row, 0).plain
+
+        self.assertIn("repo", plain)
+        self.assertIn("alpha-app", plain)
+        self.assertIn("recent", plain)
+        self.assertIn("repo root", plain)
+        self.assertIn("1 folder", plain)
+        self.assertIn(os.path.abspath(root).replace("\\", "/"), plain)
+
+    async def test_dir_picker_search_parent_key_enters_result_parent(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        outer = os.path.join(root, "outer")
+        alpha = os.path.join(outer, "alpha-app")
+        other = os.path.join(root, "other")
+        os.makedirs(alpha)
+        os.makedirs(other)
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    other,
+                    selected.append,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+            self.assertIn("alpha-app", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_key(self._key_event("p"))
+            await pilot.pause()
+
+            self.assertIn(os.path.abspath(outer).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+            self.assertIn("parent:", self._widget_text(app.screen, "#dir-foot"))
+
+        self.assertEqual(selected, [])
+
+    async def test_dir_picker_search_delete_hides_active_stale_row(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        missing = os.path.join(root, "ghostc-plugin")
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    lambda path: None,
+                    search_roots=[SearchRoot(missing, label="ghostc-plugin", source="recent")],
+                    search_debounce=0,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("ghost"))
+            await pilot.pause(0.2)
+            self.assertIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_key(self._key_event("delete"))
+            await pilot.pause()
+
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertNotIn("ghostc-plugin", text)
+            self.assertIn("hidden stale root", self._widget_text(app.screen, "#dir-foot"))
+
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
