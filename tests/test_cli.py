@@ -24,6 +24,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workspace-picker")
 
+    def test_demo_screenshot_accepts_workspace_search_view(self):
+        args = build_parser().parse_args(["demo-screenshot", "--view", "workspace-search"])
+
+        self.assertEqual(args.command, "demo-screenshot")
+        self.assertEqual(args.view, "workspace-search")
+
     def test_demo_screenshot_renders_workspace_picker_view(self):
         import html
         import tempfile
@@ -36,6 +42,19 @@ class CliTests(unittest.TestCase):
         self.assertIn("choose workspace folder", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)
+
+    def test_demo_screenshot_renders_workspace_search_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(Path(tmp) / "search.svg", width=100, height=30, view="workspace-search")
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("search mode", plain)
+        self.assertIn("[ ] repo", plain)
+        self.assertIn("pyherdr-demo", plain)
 
     def test_workflow_graph_accepts_svg_output(self):
         args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])

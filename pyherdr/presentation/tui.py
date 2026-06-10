@@ -39,6 +39,7 @@ from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents
+from ..workspace_search import ExplorerRow, SearchRoot, search_workspace_rows
 from .client import PaneClient, ServerClient
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
@@ -1248,6 +1249,11 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-row:hover { background: $ph-surface0; }
     .dir-quick { width: 1fr; color: $ph-blue; padding: 0 1; }
     .dir-quick:hover { background: $ph-surface0; }
+    .dir-search { width: 1fr; color: $ph-text; padding: 0 1; }
+    .dir-search:hover { background: $ph-surface0; }
+    .dir-active { background: $ph-surface0; }
+    .dir-selected { color: $ph-green; }
+    .dir-stale { color: $ph-subtext0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
     #dir-foot { color: $ph-subtext0; padding: 1 0 0 0; }
@@ -1259,12 +1265,21 @@ class DirPickerScreen(ModalScreen[None]):
         on_select: Callable[[str], None],
         *,
         quick_paths: list[tuple[str, str]] | None = None,
+        search_roots: list[SearchRoot] | None = None,
     ) -> None:
         super().__init__()
         self._cwd = os.path.abspath(start or os.getcwd())
         self._on_select = on_select
         self._quick_paths = self._normalize_quick_paths(quick_paths or [])
+        self._search_roots = self._normalize_search_roots(search_roots or [])
+        if not self._search_roots:
+            self._search_roots = [SearchRoot(self._cwd, label="current folder", source="current")]
         self._repo_metadata_cache: dict[str, DirRepoMetadata] = {}
+        self._search_mode = False
+        self._search_rows: list[ExplorerRow] = []
+        self._active_row = 0
+        self._selected_paths: set[str] = set()
+        self._query = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
@@ -1275,6 +1290,7 @@ class DirPickerScreen(ModalScreen[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#dir-box", Vertical).border_title = "choose workspace folder"
+        self._update_browse_footer()
         await self._populate("")
 
     async def _populate(self, query: str | None = None) -> None:
@@ -1282,7 +1298,12 @@ class DirPickerScreen(ModalScreen[None]):
         self.query_one("#dir-path", Static).update(self._path_summary(subdirs))
         listing = self.query_one("#dir-list", VerticalScroll)
         await listing.remove_children()
-        needle = (query if query is not None else self.query_one("#dir-jump", Input).value).strip().lower()
+        if query is not None:
+            self._query = query
+        needle = self._query.strip().lower()
+        if self._search_mode:
+            await self._populate_search(listing, needle)
+            return
         rows: list[Static] = [Clickable("✓ open this folder", "dir_open", classes="dir-open", id="dir-open")]
         parent = os.path.dirname(self._cwd)
         if parent and parent != self._cwd:
@@ -1305,6 +1326,56 @@ class DirPickerScreen(ModalScreen[None]):
                 continue
             rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
         await listing.mount(*rows)
+
+    async def _populate_search(self, listing: VerticalScroll, needle: str) -> None:
+        self._search_rows = search_workspace_rows(needle, self._search_roots)
+        if self._active_row >= len(self._search_rows):
+            self._active_row = max(0, len(self._search_rows) - 1)
+        if not needle:
+            await listing.mount(Static("  type to search configured roots", classes="dir-row"))
+            self._update_search_footer()
+            return
+        if not self._search_rows:
+            await listing.mount(Static("  no matching folders or repos", classes="dir-row"))
+            self._update_search_footer()
+            return
+        rows: list[Static] = []
+        for index, row in enumerate(self._search_rows):
+            classes = "dir-search"
+            if index == self._active_row:
+                classes += " dir-active"
+            if row.path in self._selected_paths:
+                classes += " dir-selected"
+            if row.stale:
+                classes += " dir-stale"
+            rows.append(
+                Clickable(
+                    self._search_row_text(row, index),
+                    "dir_search_focus",
+                    row.path,
+                    classes=classes,
+                    dbl_action="dir_search_open",
+                )
+            )
+        await listing.mount(*rows)
+        self._update_search_footer()
+
+    def _search_row_text(self, row: ExplorerRow, index: int) -> Text:
+        cursor = ">" if index == self._active_row else " "
+        selected = "[x]" if row.path in self._selected_paths else "[ ]"
+        kind = "repo" if row.kind == "repo" else ("stale" if row.stale else "dir")
+        detail = row.path.replace("\\", "/")
+        return Text(f"{cursor} {selected} {kind:<5} {row.label}  {detail}")
+
+    def _update_search_footer(self) -> None:
+        self.query_one("#dir-foot", Static).update(
+            "search mode · ↑/↓ move · space select · enter open · ctrl+l path mode · esc cancel"
+        )
+
+    def _update_browse_footer(self) -> None:
+        self.query_one("#dir-foot", Static).update(
+            "click a folder to enter  ·  ctrl+f search roots  ·  ✓ open this folder  ·  esc cancel"
+        )
 
     def _path_summary(self, subdirs: list[str]) -> Text:
         text = Text(self._cwd.replace("\\", "/"))
@@ -1353,6 +1424,19 @@ class DirPickerScreen(ModalScreen[None]):
             normalized.append((label.strip(), path))
         return normalized
 
+    @staticmethod
+    def _normalize_search_roots(roots: list[SearchRoot]) -> list[SearchRoot]:
+        normalized: list[SearchRoot] = []
+        seen: set[str] = set()
+        for root in roots:
+            path = os.path.abspath(os.path.expanduser(root.path.strip()))
+            key = os.path.normcase(path)
+            if not path or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(SearchRoot(path, label=root.label, source=root.source))
+        return normalized
+
     def _subdirs(self) -> list[str]:
         try:
             names = [entry.name for entry in os.scandir(self._cwd) if entry.is_dir() and not entry.name.startswith(".")]
@@ -1367,20 +1451,28 @@ class DirPickerScreen(ModalScreen[None]):
             self.dismiss()
         elif message.action == "dir_up":
             self._cwd = os.path.dirname(self._cwd)
-            self.run_worker(self._populate())
+            self.run_worker(self._populate(), exclusive=True)
         elif message.action == "dir_quick" and message.arg and os.path.isdir(message.arg):
             self._cwd = os.path.abspath(message.arg)
-            self.run_worker(self._populate())
+            self.run_worker(self._populate(), exclusive=True)
         elif message.action == "dir_enter" and message.arg:
             self._cwd = message.arg
-            self.run_worker(self._populate())
+            self.run_worker(self._populate(), exclusive=True)
+        elif message.action == "dir_search_focus" and message.arg:
+            self._focus_search_path(message.arg)
+            self.run_worker(self._populate(), exclusive=True)
+        elif message.action == "dir_search_open" and message.arg:
+            self._open_search_path(message.arg)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        if self._search_mode:
+            self._open_active_search_row()
+            return
         path = os.path.expanduser(event.value.strip())
         if os.path.isdir(path):
             self._cwd = os.path.abspath(path)
-            self.run_worker(self._populate())
+            self.run_worker(self._populate(), exclusive=True)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         await self._populate(event.value)
@@ -1389,6 +1481,66 @@ class DirPickerScreen(ModalScreen[None]):
         if event.key == "escape":
             event.stop()
             self.dismiss()
+        elif event.key == "ctrl+f":
+            event.stop()
+            event.prevent_default()
+            self._search_mode = True
+            self._active_row = 0
+            self.run_worker(self._populate(), exclusive=True)
+        elif event.key == "ctrl+l":
+            event.stop()
+            event.prevent_default()
+            self._search_mode = False
+            self._update_browse_footer()
+            self.run_worker(self._populate(), exclusive=True)
+        elif self._search_mode and event.key in ("up", "down"):
+            event.stop()
+            event.prevent_default()
+            delta = -1 if event.key == "up" else 1
+            self._move_active_search_row(delta)
+            self.run_worker(self._populate(), exclusive=True)
+        elif self._search_mode and event.key == "space":
+            event.stop()
+            event.prevent_default()
+            self._toggle_active_search_row()
+            self.run_worker(self._populate(), exclusive=True)
+
+    def _move_active_search_row(self, delta: int) -> None:
+        if not self._search_rows:
+            self._active_row = 0
+            return
+        self._active_row = max(0, min(len(self._search_rows) - 1, self._active_row + delta))
+
+    def _toggle_active_search_row(self) -> None:
+        row = self._active_search_row()
+        if row is None or row.stale:
+            return
+        if row.path in self._selected_paths:
+            self._selected_paths.remove(row.path)
+        else:
+            self._selected_paths.add(row.path)
+
+    def _open_active_search_row(self) -> None:
+        row = self._active_search_row()
+        if row is not None:
+            self._open_search_path(row.path)
+
+    def _active_search_row(self) -> ExplorerRow | None:
+        if not self._search_rows:
+            return None
+        return self._search_rows[max(0, min(len(self._search_rows) - 1, self._active_row))]
+
+    def _focus_search_path(self, path: str) -> None:
+        for index, row in enumerate(self._search_rows):
+            if os.path.normcase(row.path) == os.path.normcase(path):
+                self._active_row = index
+                return
+
+    def _open_search_path(self, path: str) -> None:
+        if not os.path.isdir(path):
+            return
+        self._on_select(os.path.abspath(path))
+        self.dismiss()
 
 
 class PaneView(Static):
@@ -2042,6 +2194,7 @@ class PyHerdrTui(App):
                 self._workspace_picker_start(),
                 self._create_workspace_at,
                 quick_paths=self._workspace_picker_quick_paths(),
+                search_roots=self._workspace_picker_search_roots(),
             )
         )
 
@@ -2063,6 +2216,35 @@ class PyHerdrTui(App):
         paths.append(("process cwd", os.getcwd()))
         paths.append(("home", os.path.expanduser("~")))
         return paths
+
+    def _workspace_picker_search_roots(self) -> list[SearchRoot]:
+        roots: list[SearchRoot] = []
+        start = self._workspace_picker_start()
+        roots.append(SearchRoot(start, label="current workspace", source="current"))
+        home = os.path.expanduser("~")
+        for name in ("github", "code", "src", "work"):
+            candidate = os.path.join(home, name)
+            if os.path.isdir(candidate):
+                roots.append(SearchRoot(candidate, label=name, source="configured"))
+        repo_root = _git_root(start)
+        if repo_root:
+            roots.append(SearchRoot(repo_root, label="repo root", source="repo"))
+        for recent in load_workspace_recents():
+            roots.append(SearchRoot(str(recent["path"]), label=str(recent["label"]), source="recent"))
+        return self._dedupe_search_roots(roots)
+
+    @staticmethod
+    def _dedupe_search_roots(roots: list[SearchRoot]) -> list[SearchRoot]:
+        deduped: list[SearchRoot] = []
+        seen: set[str] = set()
+        for root in roots:
+            path = os.path.abspath(os.path.expanduser(root.path))
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(SearchRoot(path, label=root.label, source=root.source))
+        return deduped
 
     def _create_workspace_at(self, path: str) -> None:
         target = os.path.expanduser(path.strip())

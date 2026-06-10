@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from textual.widgets import Input
 
 from .presentation.tui import Activated, DirPickerScreen, DirRepoMetadata, FanoutScreen, PyHerdrTui, WorkflowScreen
 from .workflow import new_event
+from .workspace_search import SearchRoot
 
 DEMO_STATE: dict[str, Any] = {
     "focused_workspace_id": "ws-main",
@@ -352,6 +354,31 @@ async def _render(path: Path, width: int, height: int, view: str) -> Path:
         elif view == "workspace-picker":
             app.push_screen(DemoDirPickerScreen())
             await pilot.pause(0.5)
+        elif view == "workspace-search":
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "pyherdr-demo"
+                repo.mkdir()
+                (repo / ".git").mkdir()
+                (root / "pyherdr-docs").mkdir()
+                (root / "node_modules" / "pyherdr-hidden").mkdir(parents=True)
+                app.push_screen(
+                    DirPickerScreen(
+                        str(root),
+                        lambda selected: None,
+                        search_roots=[SearchRoot(str(root), label="demo roots", source="workspace")],
+                    )
+                )
+                await pilot.pause(0.5)
+                if isinstance(app.screen, DirPickerScreen):
+                    key_event = type(
+                        "Key",
+                        (),
+                        {"key": "ctrl+f", "stop": lambda self: None, "prevent_default": lambda self: None},
+                    )()
+                    app.screen.on_key(key_event)
+                    await app.screen.on_input_changed(type("Changed", (), {"value": "pyherdr"})())
+                    await pilot.pause(0.5)
         path.write_text(app.export_screenshot(title="PyHerdr demo TUI", simplify=False), encoding="utf-8")
     return path
 
@@ -360,6 +387,6 @@ def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38, vi
     """Render the real Textual TUI with deterministic demo data to an SVG file."""
 
     normalized = view.strip().lower()
-    if normalized not in ("main", "workflow", "fanout", "workspace-picker"):
+    if normalized not in ("main", "workflow", "fanout", "workspace-picker", "workspace-search"):
         raise ValueError(f"unknown demo screenshot view: {view}")
     return asyncio.run(_render(path, width, height, normalized))

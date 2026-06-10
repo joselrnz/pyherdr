@@ -121,6 +121,7 @@ python -m pyherdr demo-screenshot --output pyherdr-demo.svg
 python -m pyherdr demo-screenshot --view workflow --output pyherdr-workflow.svg
 python -m pyherdr demo-screenshot --view fanout --output pyherdr-fanout.svg
 python -m pyherdr demo-screenshot --view workspace-picker --output pyherdr-picker.svg
+python -m pyherdr demo-screenshot --view workspace-search --output pyherdr-search.svg
 ```
 
 Open the SVG in a browser to inspect it. To test the live product with real PTY
@@ -156,7 +157,9 @@ quick jumps for the workspace root, recent roots, git repo root, process cwd,
 and home. Typing in the picker filters child folders and quick roots; pressing
 Enter on a real path jumps there. The picker also shows visible child-folder
 count plus best-effort git repo, branch, and dirty/clean metadata for the
-currently highlighted root.
+currently highlighted root. Press `ctrl+f` inside the picker to search known
+workspace roots and recent repositories, then use arrow keys, Space, Enter, or
+mouse double-click to select and open a result.
 
 ## 🧰 CLI
 

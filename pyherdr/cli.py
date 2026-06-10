@@ -95,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_screenshot.add_argument("--height", type=int, default=38, help="terminal rows")
     demo_screenshot.add_argument(
         "--view",
-        choices=["main", "workflow", "fanout", "workspace-picker"],
+        choices=["main", "workflow", "fanout", "workspace-picker", "workspace-search"],
         default="main",
         help="demo view to render",
     )

@@ -16,6 +16,7 @@ from pyherdr.presentation.tui import (
 )
 from pyherdr.workflow import new_event
 from pyherdr.workspace_recents import record_workspace_recent
+from pyherdr.workspace_search import SearchRoot
 
 STATE = {
     "focused_workspace_id": "ws1",
@@ -323,6 +324,10 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         return type("Changed", (), {"value": value})()
 
     @staticmethod
+    def _key_event(key: str) -> object:
+        return type("Key", (), {"key": key, "stop": lambda self: None, "prevent_default": lambda self: None})()
+
+    @staticmethod
     def _screen_text(screen: object, selector: str) -> str:
         widget = screen.query_one(selector)
         lines: list[str] = []
@@ -434,6 +439,70 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(git_root.call_count, root_calls)
                 self.assertEqual(git_branch.call_count, branch_calls)
                 self.assertEqual(git_dirty.call_count, dirty_calls)
+
+    async def test_dir_picker_search_mode_selects_and_opens_result(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        alpha = os.path.join(root, "alpha-app")
+        beta = os.path.join(root, "beta-tool")
+        os.makedirs(os.path.join(alpha, ".git"))
+        os.makedirs(beta)
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    selected.append,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("alpha-app", text)
+            self.assertNotIn("beta-tool", text)
+
+            app.screen.on_key(self._key_event("space"))
+            await pilot.pause()
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("[x]", text)
+
+            app.screen.on_input_submitted(self._submit_event("alpha"))
+            await pilot.pause()
+            self.assertEqual(selected, [os.path.abspath(alpha)])
+
+    async def test_dir_picker_search_row_double_click_opens_result(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        alpha = os.path.join(root, "alpha-app")
+        os.makedirs(alpha)
+        selected: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    selected.append,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+            app.screen.on_activated(self._activated("dir_search_open", os.path.abspath(alpha)))
+            await pilot.pause()
+
+        self.assertEqual(selected, [os.path.abspath(alpha)])
 
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
