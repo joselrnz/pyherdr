@@ -38,6 +38,7 @@ from ..config import load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
+from ..workspace_recents import load_workspace_recents
 from .client import PaneClient, ServerClient
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
@@ -1988,6 +1989,8 @@ class PyHerdrTui(App):
         repo_root = _git_root(start)
         if repo_root:
             paths.append(("repo root", repo_root))
+        for recent in load_workspace_recents():
+            paths.append((f"recent: {recent['label']}", str(recent["path"])))
         paths.append(("process cwd", os.getcwd()))
         paths.append(("home", os.path.expanduser("~")))
         return paths

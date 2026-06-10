@@ -21,6 +21,7 @@ from .runtime import TerminalManager
 from .runtime.procstats import AVAILABLE as STATS_AVAILABLE
 from .session import current_session
 from .store import to_dict
+from .workspace_recents import record_workspace_recent
 from .worktree import create_worktree, list_worktrees, remove_worktree
 
 
@@ -190,6 +191,10 @@ def _workspace_create(state: AppState, params: dict[str, Any], _processes: Termi
         cwd=str(params.get("cwd") or "."),
     )
     state.create_tab(workspace.id, "shell")
+    try:
+        record_workspace_recent(workspace.cwd, label=workspace.label)
+    except (OSError, ValueError):
+        pass
     return {"type": "workspace_created", "workspace": _workspace_record(workspace)}
 
 

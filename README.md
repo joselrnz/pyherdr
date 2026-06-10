@@ -151,7 +151,8 @@ Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
 or workspace rows for context menus (including *resource usage*). The bottom **action bar** has clickable
 buttons for help, palette, new tab, split, terminal, stats, theme, detach, quit.
 The new-workspace folder picker starts from the active workspace and includes
-quick jumps for the workspace root, git repo root, process cwd, and home.
+quick jumps for the workspace root, recent roots, git repo root, process cwd,
+and home.
 
 ## 🧰 CLI
 
@@ -193,6 +194,8 @@ browser-quality diagram, export SVG and open it in a browser.
 - Named sessions: `PYHERDR_SESSION=<name>` isolates state + server per name.
 - Workflow audit log: `.pyherdr/workflow.jsonl`; obvious tokens/secrets are
   redacted before events are stored.
+- Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
+  and labels only, not the server auth token.
 
 The `.pyherdr/` folder holds the auth token and is git-ignored — never commit it.
 

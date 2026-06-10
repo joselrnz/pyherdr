@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from pyherdr.api import dispatch
 from pyherdr.models import AppState
+from pyherdr.workspace_recents import load_workspace_recents
 
 
 class _FakeProcesses:
@@ -37,6 +40,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response["result"]["workspace"]["label"], "api")
         self.assertEqual(len(state.focused_workspace.tabs), 1)
         self.assertEqual(len(state.focused_workspace.focused_tab.panes), 1)
+
+    def test_workspace_create_records_recent_root(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            workspace = root / "project"
+            workspace.mkdir()
+            with patch.dict(
+                "os.environ",
+                {"PYHERDR_PORTABLE": "0", "PYHERDR_RUNTIME_DIR": str(runtime)},
+                clear=False,
+            ):
+                state = AppState.bootstrap(cwd=str(root))
+                dispatch(
+                    state,
+                    {
+                        "id": "1",
+                        "method": "workspace.create",
+                        "params": {"label": "api", "cwd": str(workspace)},
+                    },
+                )
+
+                recents = load_workspace_recents()
+
+        self.assertEqual(recents[0]["path"], str(workspace.resolve()))
+        self.assertEqual(recents[0]["label"], "api")
 
     def test_pane_report_agent_changes_status(self):
         state = AppState.bootstrap(cwd="C:/work")

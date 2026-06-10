@@ -15,6 +15,7 @@ from pyherdr.presentation.tui import (
     WorkflowScreen,
 )
 from pyherdr.workflow import new_event
+from pyherdr.workspace_recents import record_workspace_recent
 
 STATE = {
     "focused_workspace_id": "ws1",
@@ -588,6 +589,41 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         app._workspace_id = "wsx"
 
         self.assertEqual(app._workspace_picker_start(), os.path.abspath(workspace_cwd))
+
+    async def test_new_workspace_picker_includes_recent_roots(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.abspath(tmp)
+            runtime = os.path.join(root, "runtime")
+            current = os.path.join(root, "current")
+            recent = os.path.join(root, "recent")
+            os.makedirs(current)
+            os.makedirs(recent)
+            with patch.dict(
+                "os.environ",
+                {"PYHERDR_PORTABLE": "0", "PYHERDR_RUNTIME_DIR": runtime},
+                clear=False,
+            ):
+                record_workspace_recent(recent, label="recent project", now=1.0)
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+                app._state = {
+                    "focused_workspace_id": "wsx",
+                    "workspaces": [
+                        {
+                            "id": "wsx",
+                            "label": "current",
+                            "cwd": current,
+                            "tabs": [],
+                        }
+                    ],
+                }
+                app._workspace_id = "wsx"
+                quick_paths = app._workspace_picker_quick_paths()
+
+        self.assertIn(("recent: recent project", os.path.abspath(recent)), quick_paths)
 
     async def test_move_workspace_up_down(self):
         client = FakeClient()
