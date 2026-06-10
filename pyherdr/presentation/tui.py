@@ -211,6 +211,21 @@ def _git_ahead_behind(cwd: str) -> tuple[int, int]:
     return (0, 0)
 
 
+def _git_dirty(cwd: str) -> bool:
+    """Best-effort dirty worktree marker for picker metadata."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=cwd or None,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 class Activated(Message):
     """Posted when a clickable element (tab, button, pane) is clicked."""
 
@@ -257,6 +272,15 @@ class FanoutChoice:
     label: str
     selector: str
     detail: str
+
+
+@dataclass(frozen=True)
+class DirRepoMetadata:
+    """Cached repository facts for the workspace picker."""
+
+    repo_root: str
+    branch: str
+    dirty: bool
 
 
 def _help_text(palette: Palette) -> Text:
@@ -1240,6 +1264,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._cwd = os.path.abspath(start or os.getcwd())
         self._on_select = on_select
         self._quick_paths = self._normalize_quick_paths(quick_paths or [])
+        self._repo_metadata_cache: dict[str, DirRepoMetadata] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
@@ -1253,7 +1278,8 @@ class DirPickerScreen(ModalScreen[None]):
         await self._populate("")
 
     async def _populate(self, query: str | None = None) -> None:
-        self.query_one("#dir-path", Static).update(self._cwd.replace("\\", "/"))
+        subdirs = self._subdirs()
+        self.query_one("#dir-path", Static).update(self._path_summary(subdirs))
         listing = self.query_one("#dir-list", VerticalScroll)
         await listing.remove_children()
         needle = (query if query is not None else self.query_one("#dir-jump", Input).value).strip().lower()
@@ -1273,12 +1299,47 @@ class DirPickerScreen(ModalScreen[None]):
                     id=f"dir-quick-{index}",
                 )
             )
-        for index, name in enumerate(self._subdirs()):
+        for index, name in enumerate(subdirs):
             full = os.path.join(self._cwd, name)
             if needle and needle not in name.lower() and needle not in full.lower():
                 continue
             rows.append(Clickable(f"  {name}/", "dir_enter", full, classes="dir-row", id=f"dir-{index}"))
         await listing.mount(*rows)
+
+    def _path_summary(self, subdirs: list[str]) -> Text:
+        text = Text(self._cwd.replace("\\", "/"))
+        facts = [self._folder_count_text(len(subdirs))]
+        metadata = self._repo_metadata()
+        if metadata.repo_root:
+            if os.path.normcase(os.path.abspath(self._cwd)) == os.path.normcase(os.path.abspath(metadata.repo_root)):
+                facts.append("repo root")
+            else:
+                facts.append(f"repo {os.path.basename(metadata.repo_root) or metadata.repo_root}")
+            if metadata.branch and metadata.branch != "HEAD":
+                facts.append(f"branch {metadata.branch}")
+            elif metadata.branch == "HEAD":
+                facts.append("detached HEAD")
+            facts.append("dirty" if metadata.dirty else "clean")
+        text.append("\n" + " · ".join(facts))
+        return text
+
+    def _repo_metadata(self) -> DirRepoMetadata:
+        key = os.path.abspath(self._cwd)
+        cached = self._repo_metadata_cache.get(key)
+        if cached is not None:
+            return cached
+        repo_root = _git_root(key)
+        metadata = DirRepoMetadata(
+            repo_root=repo_root,
+            branch=_git_branch(key) if repo_root else "",
+            dirty=_git_dirty(key) if repo_root else False,
+        )
+        self._repo_metadata_cache[key] = metadata
+        return metadata
+
+    @staticmethod
+    def _folder_count_text(count: int) -> str:
+        return f"{count} folder" if count == 1 else f"{count} folders"
 
     @staticmethod
     def _normalize_quick_paths(paths: list[tuple[str, str]]) -> list[tuple[str, str]]:

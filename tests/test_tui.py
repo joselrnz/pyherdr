@@ -331,6 +331,11 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             lines.append(renderable.plain if hasattr(renderable, "plain") else str(renderable))
         return "\n".join(lines)
 
+    @staticmethod
+    def _widget_text(screen: object, selector: str) -> str:
+        renderable = screen.query_one(selector).render()
+        return renderable.plain if hasattr(renderable, "plain") else str(renderable)
+
     async def test_dir_picker_navigates_and_selects(self):
         import os
         import tempfile
@@ -396,6 +401,39 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             text = self._screen_text(app.screen, "#dir-list")
             self.assertIn("recent project", text)
             self.assertNotIn("alpha/", text)
+
+    async def test_dir_picker_metadata_shows_repo_context_and_caches_git(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        base = tempfile.mkdtemp()
+        os.makedirs(os.path.join(base, "src"))
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        with (
+            patch("pyherdr.presentation.tui._git_root", return_value=os.path.abspath(base)) as git_root,
+            patch("pyherdr.presentation.tui._git_branch", return_value="main") as git_branch,
+            patch("pyherdr.presentation.tui._git_dirty", return_value=True) as git_dirty,
+        ):
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.push_screen(DirPickerScreen(base, lambda path: None))
+                await pilot.pause()
+                metadata = self._widget_text(app.screen, "#dir-path")
+                self.assertIn(os.path.abspath(base).replace("\\", "/"), metadata)
+                self.assertIn("1 folder", metadata)
+                self.assertIn("repo root", metadata)
+                self.assertIn("branch main", metadata)
+                self.assertIn("dirty", metadata)
+
+                root_calls = git_root.call_count
+                branch_calls = git_branch.call_count
+                dirty_calls = git_dirty.call_count
+                await app.screen.on_input_changed(self._changed_event("src"))
+                await pilot.pause()
+                self.assertEqual(git_root.call_count, root_calls)
+                self.assertEqual(git_branch.call_count, branch_calls)
+                self.assertEqual(git_dirty.call_count, dirty_calls)
 
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []

@@ -153,7 +153,9 @@ buttons for help, palette, new tab, split, terminal, stats, theme, detach, quit.
 The new-workspace folder picker starts from the active workspace and includes
 quick jumps for the workspace root, recent roots, git repo root, process cwd,
 and home. Typing in the picker filters child folders and quick roots; pressing
-Enter on a real path jumps there.
+Enter on a real path jumps there. The picker also shows visible child-folder
+count plus best-effort git repo, branch, and dirty/clean metadata for the
+currently highlighted root.
 
 ## 🧰 CLI
 
