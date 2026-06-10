@@ -48,6 +48,24 @@ reattach without losing a session.
   a full CLI/API mirrors the UI. Plus cron-scheduled pane commands and git
   worktree helpers.
 
+## Glossary
+
+- **Fan-out:** send one command or text input to several panes at once. PyHerdr
+  previews the target panes first, then sends only after explicit confirmation.
+- **Pane:** one live terminal inside the TUI. A pane can run a shell, a test
+  command, or an AI agent.
+- **Workspace:** a project folder plus its tabs and panes.
+- **TUI:** terminal user interface. PyHerdr's main UI runs inside a terminal
+  rather than a native desktop window.
+- **PTY:** pseudo-terminal. This is what makes each pane behave like a real
+  interactive terminal.
+- **Mega plan:** the internal roadmap that tracks larger product goals and
+  implementation chunks.
+- **WS / worksite:** a numbered roadmap task, such as `WS-122`. It is not a
+  website; it means "worksite" in the plan.
+- **Lane:** a group of related worksites in the mega plan, such as UI polish,
+  multiplexing, workflow automation, or plugin work.
+
 ## 📦 Install
 
 ```bash
