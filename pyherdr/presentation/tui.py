@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
@@ -60,6 +61,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "X": "close_tab",
     "T": "rename_tab",
     "N": "new_workspace",
+    "F": "fanout",
     "w": "next_workspace",
     "g": "goto",
     ":": "palette",
@@ -232,6 +234,15 @@ class Clickable(Static):
             self.post_message(Activated(self._action, self._arg))
 
 
+@dataclass(frozen=True)
+class FanoutChoice:
+    """One selectable command fan-out target."""
+
+    label: str
+    selector: str
+    detail: str
+
+
 def _help_text(palette: Palette) -> Text:
     """The grouped keybind cheat-sheet shown in the help overlay."""
     text = Text()
@@ -267,6 +278,7 @@ def _help_text(palette: Palette) -> Text:
     row(":", "command palette (run anything)")
     row("g", "jump to pane")
     row("s", "theme / settings")
+    row("F", "command fan-out")
     row("d", "detach (panes keep running)")
     row("?", "this help")
     row("q", "quit")
@@ -913,6 +925,174 @@ class CommandPaletteScreen(ModalScreen[None]):
             self.dismiss()
 
 
+class FanoutScreen(ModalScreen[None]):
+    """Preview and execute command fan-out to a selected pane group."""
+
+    DEFAULT_CSS = """
+    FanoutScreen { align: center middle; background: $ph-base 70%; }
+    #fanout-box {
+        width: 76;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #fanout-targets { height: auto; max-height: 9; }
+    .fanout-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .fanout-row:hover { background: $ph-surface0; }
+    #fanout-preview {
+        width: 1fr;
+        min-height: 5;
+        max-height: 9;
+        color: $ph-subtext0;
+        border: round $ph-overlay0;
+        padding: 0 1;
+        margin: 1 0 0 0;
+    }
+    #fanout-send { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; margin: 1 0 0 0; }
+    #fanout-send:hover { background: $ph-accent; color: $ph-base; }
+    #fanout-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(
+        self,
+        choices: list[FanoutChoice],
+        submit: Callable[[str, str, bool], dict[str, Any]],
+    ) -> None:
+        super().__init__()
+        self._choices = choices
+        self._submit = submit
+        self._selected = 0
+        self._last_preview_key: tuple[str, str] | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="fanout-box"):
+            yield Input(placeholder="command to preview, then send", id="fanout-command")
+            yield VerticalScroll(id="fanout-targets")
+            yield Static(self._empty_preview(), id="fanout-preview")
+            yield Clickable("send after preview", "fanout_execute", id="fanout-send")
+            yield Static("select target · enter preview · send executes · esc cancel", id="fanout-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#fanout-box", Vertical).border_title = "command fan-out"
+        self.query_one("#fanout-command", Input).focus()
+        await self._rebuild_targets()
+
+    async def _rebuild_targets(self) -> None:
+        listing = self.query_one("#fanout-targets", VerticalScroll)
+        await listing.remove_children()
+        rows = [
+            Clickable(
+                self._target_text(index, choice),
+                "fanout_target",
+                str(index),
+                id=f"fanout-target-{index}",
+                classes="fanout-row",
+            )
+            for index, choice in enumerate(self._choices)
+        ]
+        if rows:
+            await listing.mount(*rows)
+
+    def _target_text(self, index: int, choice: FanoutChoice) -> Text:
+        text = Text()
+        text.append("✓ " if index == self._selected else "  ", style="#a6e3a1")
+        text.append(choice.label, style="bold" if index == self._selected else "")
+        text.append(f"  {choice.detail}", style="#6c7086")
+        return text
+
+    @staticmethod
+    def _empty_preview() -> Text:
+        text = Text()
+        text.append("type a command and press enter to preview targets")
+        return text
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "fanout_target" and message.arg is not None:
+            index = int(message.arg)
+            if 0 <= index < len(self._choices):
+                self._selected = index
+                self._last_preview_key = None
+                self.run_worker(self._rebuild_targets())
+                self._preview_if_ready()
+        elif message.action == "fanout_execute":
+            self._execute_or_preview()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._preview(event.value.strip())
+
+    def _command_text(self) -> str:
+        return self.query_one("#fanout-command", Input).value.strip()
+
+    def _preview_if_ready(self) -> None:
+        command = self._command_text()
+        if command:
+            self._preview(command)
+
+    def _preview(self, command: str) -> None:
+        if not self._choices:
+            self.query_one("#fanout-preview", Static).update("no panes available")
+            return
+        if not command:
+            self.query_one("#fanout-preview", Static).update(self._empty_preview())
+            return
+        choice = self._choices[self._selected]
+        try:
+            result = self._submit(choice.selector, command, True)
+        except Exception as exc:
+            self._last_preview_key = None
+            self.query_one("#fanout-preview", Static).update(f"preview failed: {exc}")
+            return
+        self._last_preview_key = (choice.selector, command)
+        self.query_one("#fanout-preview", Static).update(self._preview_text(result))
+
+    def _execute_or_preview(self) -> None:
+        command = self._command_text()
+        if not command:
+            self._preview("")
+            return
+        choice = self._choices[self._selected]
+        if self._last_preview_key != (choice.selector, command):
+            self._preview(command)
+            return
+        try:
+            result = self._submit(choice.selector, command, False)
+        except Exception as exc:
+            self.query_one("#fanout-preview", Static).update(f"send failed: {exc}")
+            return
+        sent = result.get("sent", 0) if isinstance(result, dict) else 0
+        notify = getattr(self.app, "notify", None)
+        if callable(notify):
+            notify(f"sent command to {sent} panes", timeout=3)
+        self.dismiss()
+
+    @staticmethod
+    def _preview_text(result: dict[str, Any]) -> Text:
+        count = int(result.get("target_count", 0))
+        text = Text()
+        text.append(f"preview: {count} {'pane' if count == 1 else 'panes'}\n", style="bold")
+        for record in result.get("targets", [])[:6]:
+            workspace = str(record.get("workspace_label", "ws"))
+            tab = str(record.get("tab_label", "tab"))
+            title = str(record.get("title", record.get("pane_id", "pane")))
+            status = str(record.get("status", "unknown"))
+            text.append(f"  {workspace} / {tab} / {title}  {status}\n")
+        extra = count - 6
+        if extra > 0:
+            text.append(f"  +{extra} more\n")
+        text.append("click send to execute", style="#a6e3a1")
+        return text
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
 class ContextMenuScreen(ModalScreen[None]):
     """A small right-click action menu; clicking an item runs that action."""
 
@@ -1420,6 +1600,8 @@ class PyHerdrTui(App):
             self._open_stats("resource monitor · all sessions", None)
         elif action == "workflow_view":
             self._open_workflow_view()
+        elif action == "fanout":
+            self._open_fanout_picker()
         elif action in ("quit", "detach"):
             # Detach == leave the TUI; the background server keeps every pane
             # running, so reopening `pyherdr tui` re-attaches to them.
@@ -1535,7 +1717,7 @@ class PyHerdrTui(App):
             self._open_workflow_view()
         elif action in (
             "help", "palette", "settings", "detach", "quit",
-            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace",
+            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
             self._run_named_action(action)
@@ -1591,6 +1773,51 @@ class PyHerdrTui(App):
     def _open_workflow_view(self) -> None:
         self.push_screen(WorkflowScreen(self._workflow_events(), self._palette))
 
+    def _open_fanout_picker(self) -> None:
+        choices = self._fanout_choices()
+        if not choices:
+            self.notify("no panes available for fan-out", timeout=3)
+            return
+        self.push_screen(FanoutScreen(choices, self._fanout_submit))
+
+    def _fanout_submit(self, selector: str, command: str, dry_run: bool) -> dict[str, Any]:
+        return self._client.pane_fanout([selector], command, enter=True, dry_run=dry_run)
+
+    def _fanout_choices(self) -> list[FanoutChoice]:
+        choices: list[FanoutChoice] = []
+        pane = self._pane_by_id(self._pane_id)
+        if pane is not None and self._pane_id:
+            choices.append(FanoutChoice("focused pane", f"pane:{self._pane_id}", self._pane_detail(pane)))
+        tab = self._focused_tab()
+        if tab is not None:
+            tab_id = str(tab.get("id"))
+            panes = [pane for pane in tab.get("panes", []) if isinstance(pane, dict)]
+            choices.append(
+                FanoutChoice("current tab", f"tab:{tab_id}", f"{tab.get('label', 'tab')} · {len(panes)} panes")
+            )
+        workspace = self._focused_workspace()
+        if workspace is not None:
+            ws_id = str(workspace.get("id"))
+            choices.append(
+                FanoutChoice(
+                    "current workspace",
+                    f"workspace:{ws_id}",
+                    f"{workspace.get('label', 'ws')} · {len(self._workspace_panes(workspace))} panes",
+                )
+            )
+        all_panes = self._all_panes()
+        choices.append(FanoutChoice("all panes", "all", f"{len(all_panes)} panes"))
+        for agent in self._agent_names():
+            choices.append(FanoutChoice(f"agent:{agent}", f"agent:{agent}", "matching agent panes"))
+        deduped: list[FanoutChoice] = []
+        seen: set[str] = set()
+        for choice in choices:
+            if choice.selector in seen:
+                continue
+            seen.add(choice.selector)
+            deduped.append(choice)
+        return deduped
+
     _PALETTE_ACTIONS = [
         ("New tab", "new_tab"),
         ("Split pane right", "split_sbs"),
@@ -1614,6 +1841,7 @@ class PyHerdrTui(App):
         ("Pane menu…", "pane_menu"),
         ("Resource monitor (CPU/RAM)…", "resource_monitor"),
         ("Workflow graph + log…", "workflow_view"),
+        ("Command fan-out…", "fanout"),
         ("Keybindings help", "help"),
         ("Detach (keep panes running)", "detach"),
         ("Quit", "quit"),
@@ -1782,6 +2010,36 @@ class PyHerdrTui(App):
     def _focused_panes(self) -> list[dict]:
         tab = self._focused_tab()
         return tab.get("panes", []) if tab else []
+
+    def _pane_by_id(self, pane_id: str | None) -> dict[str, Any] | None:
+        if not pane_id:
+            return None
+        for workspace in self._workspaces():
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    if isinstance(pane, dict) and str(pane.get("id")) == pane_id:
+                        return pane
+        return None
+
+    def _pane_detail(self, pane: dict[str, Any]) -> str:
+        pane_id = str(pane.get("id", ""))
+        for workspace in self._workspaces():
+            for tab in workspace.get("tabs", []):
+                for candidate in tab.get("panes", []):
+                    if isinstance(candidate, dict) and str(candidate.get("id", "")) == pane_id:
+                        return (
+                            f"{workspace.get('label', 'ws')} · {tab.get('label', 'tab')} · "
+                            f"{pane.get('title', pane.get('id', 'pane'))}"
+                        )
+        return str(pane.get("title", pane.get("id", "pane")))
+
+    def _agent_names(self) -> list[str]:
+        names = {
+            str(pane.get("agent")).strip()
+            for pane in self._all_panes()
+            if str(pane.get("agent", "")).strip()
+        }
+        return sorted(names, key=str.lower)
 
     def _cycle_tab(self, delta: int) -> None:
         tabs = self._focused_tabs()

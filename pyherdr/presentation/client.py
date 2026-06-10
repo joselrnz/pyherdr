@@ -98,6 +98,17 @@ class PaneClient(Protocol):
         """Move a tab left or right among its siblings."""
         ...
 
+    def pane_fanout(
+        self,
+        targets: list[str],
+        text: str,
+        *,
+        enter: bool = True,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Preview or send text to panes selected by fan-out target selectors."""
+        ...
+
 
 class ServerClient:
     """`PaneClient` backed by the PyHerdr server over the local socket."""
@@ -170,3 +181,14 @@ class ServerClient:
 
     def move_tab(self, tab_id: str, direction: str) -> dict[str, Any]:
         return self._request("tab.move", tab_id=tab_id, direction=direction)
+
+    def pane_fanout(
+        self,
+        targets: list[str],
+        text: str,
+        *,
+        enter: bool = True,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        response = self._request("pane.fanout", targets=targets, text=text, enter=enter, dry_run=dry_run)
+        return response.get("result", {})

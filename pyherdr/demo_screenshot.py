@@ -4,7 +4,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from .presentation.tui import PyHerdrTui, WorkflowScreen
+from textual.widgets import Input
+
+from .presentation.tui import Activated, FanoutScreen, PyHerdrTui, WorkflowScreen
 from .workflow import new_event
 
 DEMO_STATE: dict[str, Any] = {
@@ -264,6 +266,46 @@ class DemoScreenshotClient:
     def move_tab(self, tab_id: str, direction: str) -> dict[str, Any]:
         return {"result": {"type": "tab_moved"}}
 
+    def pane_fanout(
+        self,
+        targets: list[str],
+        text: str,
+        *,
+        enter: bool = True,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        selector = targets[0] if targets else ""
+        records = []
+        for workspace in DEMO_STATE["workspaces"]:
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    matches = (
+                        "all",
+                        f"workspace:{workspace.get('id')}",
+                        f"tab:{tab.get('id')}",
+                        f"pane:{pane.get('id')}",
+                        f"agent:{pane.get('agent')}",
+                    )
+                    if selector in matches:
+                        records.append(
+                            {
+                                "pane_id": pane.get("id"),
+                                "workspace_label": workspace.get("label"),
+                                "tab_label": tab.get("label"),
+                                "title": pane.get("title"),
+                                "status": pane.get("status"),
+                            }
+                        )
+        return {
+            "type": "pane_fanout",
+            "dry_run": dry_run,
+            "enter": enter,
+            "target_count": len(records),
+            "targets": records,
+            "sent": 0 if dry_run else len(records),
+            "bytes": len((text + ("\n" if enter else "")).encode("utf-8")),
+        }
+
 
 async def _render(path: Path, width: int, height: int, view: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,6 +315,13 @@ async def _render(path: Path, width: int, height: int, view: str) -> Path:
         if view == "workflow":
             app.push_screen(WorkflowScreen(DEMO_WORKFLOW_EVENTS, app._palette))
             await pilot.pause(0.5)
+        elif view == "fanout":
+            app._open_fanout_picker()
+            await pilot.pause(0.5)
+            if isinstance(app.screen, FanoutScreen):
+                app.screen.query_one("#fanout-command", Input).value = "pytest -q"
+                app.screen.on_activated(Activated("fanout_target", "1"))
+                await pilot.pause(0.5)
         path.write_text(app.export_screenshot(title="PyHerdr demo TUI", simplify=False), encoding="utf-8")
     return path
 
@@ -281,6 +330,6 @@ def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38, vi
     """Render the real Textual TUI with deterministic demo data to an SVG file."""
 
     normalized = view.strip().lower()
-    if normalized not in ("main", "workflow"):
+    if normalized not in ("main", "workflow", "fanout"):
         raise ValueError(f"unknown demo screenshot view: {view}")
     return asyncio.run(_render(path, width, height, normalized))

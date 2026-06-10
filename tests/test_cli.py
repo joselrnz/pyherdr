@@ -12,6 +12,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workflow")
 
+    def test_demo_screenshot_accepts_fanout_view(self):
+        args = build_parser().parse_args(["demo-screenshot", "--view", "fanout"])
+
+        self.assertEqual(args.command, "demo-screenshot")
+        self.assertEqual(args.view, "fanout")
+
     def test_workflow_graph_accepts_svg_output(self):
         args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])
 

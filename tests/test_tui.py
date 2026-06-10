@@ -4,6 +4,7 @@ from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
     DirPickerScreen,
+    FanoutScreen,
     HelpScreen,
     NavigatorScreen,
     PaneView,
@@ -76,6 +77,7 @@ class FakeClient:
         self.focused_tabs: list[str] = []
         self.renamed_workspaces: list[tuple[str, str]] = []
         self.closed_workspaces: list[str] = []
+        self.fanouts: list[dict] = []
 
     def state(self) -> dict:
         return STATE
@@ -151,6 +153,48 @@ class FakeClient:
     def close_workspace(self, workspace_id: str) -> dict:
         self.closed_workspaces.append(workspace_id)
         return {"result": {"type": "workspace_closed"}}
+
+    def pane_fanout(
+        self,
+        targets: list[str],
+        text: str,
+        *,
+        enter: bool = True,
+        dry_run: bool = True,
+    ) -> dict:
+        self.fanouts.append({"targets": targets, "text": text, "enter": enter, "dry_run": dry_run})
+        pane_ids: list[str]
+        selector = targets[0] if targets else ""
+        if selector == "all":
+            pane_ids = ["1-1", "1-2", "2-1"]
+        elif selector == "tab:t1":
+            pane_ids = ["1-1", "1-2"]
+        elif selector == "workspace:ws1":
+            pane_ids = ["1-1", "1-2", "2-1"]
+        elif selector == "agent:claude":
+            pane_ids = ["1-1"]
+        elif selector.startswith("pane:"):
+            pane_ids = [selector.removeprefix("pane:")]
+        else:
+            pane_ids = []
+        return {
+            "type": "pane_fanout",
+            "dry_run": dry_run,
+            "enter": enter,
+            "target_count": len(pane_ids),
+            "targets": [
+                {
+                    "pane_id": pane_id,
+                    "workspace_label": "main",
+                    "tab_label": "shell" if pane_id != "2-1" else "logs",
+                    "title": "a" if pane_id == "1-1" else ("b" if pane_id == "1-2" else "logs"),
+                    "status": "working" if pane_id == "1-1" else "idle",
+                }
+                for pane_id in pane_ids
+            ],
+            "sent": 0 if dry_run else len(pane_ids),
+            "bytes": len((text + ("\n" if enter else "")).encode("utf-8")),
+        }
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
@@ -563,6 +607,33 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.pause()
             self.assertEqual(client.tabs, 1)
+
+    async def test_fanout_picker_previews_selected_target_then_executes(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(110, 34)) as pilot:
+            await pilot.pause()
+            app._run_named_action("fanout")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, FanoutScreen)
+            await pilot.click("#fanout-target-1")  # current tab
+            await pilot.pause()
+
+            from textual.widgets import Input
+
+            app.screen.query_one("#fanout-command", Input).value = "pytest -q"
+            app.screen.on_input_submitted(self._submit_event("pytest -q"))
+            await pilot.pause()
+            self.assertEqual(client.fanouts[-1]["targets"], ["tab:t1"])
+            self.assertTrue(client.fanouts[-1]["dry_run"])
+            preview = app.screen.query_one("#fanout-preview").render()
+            self.assertIn("2 panes", preview.plain if hasattr(preview, "plain") else str(preview))
+
+            await pilot.click("#fanout-send")
+            await pilot.pause()
+            self.assertEqual(client.fanouts[-1]["targets"], ["tab:t1"])
+            self.assertFalse(client.fanouts[-1]["dry_run"])
+            self.assertEqual(client.fanouts[-1]["text"], "pytest -q")
 
     async def test_pane_menu_close(self):
         client = FakeClient()

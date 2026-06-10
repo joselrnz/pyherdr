@@ -101,6 +101,7 @@ text is seeded demo data; this command does not launch live agents.
 ```bash
 python -m pyherdr demo-screenshot --output pyherdr-demo.svg
 python -m pyherdr demo-screenshot --view workflow --output pyherdr-workflow.svg
+python -m pyherdr demo-screenshot --view fanout --output pyherdr-fanout.svg
 ```
 
 Open the SVG in a browser to inspect it. To test the live product with real PTY
@@ -125,6 +126,7 @@ Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
 | | `<` / `>` · `T` · `X` | move left/right · rename · close |
 | **Workspaces** | `N` · `w` · `{` / `}` | new (folder picker) · next · move up/down |
 | **Global** | `:` · `g` · `s` | command palette · jump to pane · theme |
+| | `F` | command fan-out picker and preview |
 | | `d` · `?` · `q` | detach · help · quit |
 
 **Mouse:** click tabs/panes, drag a divider to resize, right-click panes, tabs,
@@ -151,6 +153,9 @@ pyherdr workflow graph --format svg --output workflow.svg  # browser-quality cal
 pyherdr schedule add --cron "*/5 * * * *" --pane 1-1 git fetch
 pyherdr server stop
 ```
+
+In the TUI, `ctrl+b` then `F` opens the command fan-out picker. Pick a target
+group, type a command, press enter to preview resolved panes, then send.
 
 The TUI workflow view shows a compact terminal call graph with response/cycle
 markers. Mermaid output is source text for Mermaid-compatible renderers. For a
