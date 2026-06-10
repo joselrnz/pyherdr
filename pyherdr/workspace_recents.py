@@ -92,6 +92,25 @@ def prune_workspace_recents(path: Path | None = None, *, limit: int = MAX_RECENT
     return {"path": str(target), "kept": len(kept), "removed": len(records) - len(kept)}
 
 
+def remove_workspace_recent(
+    workspace_path: str | Path,
+    path: Path | None = None,
+    *,
+    limit: int = MAX_RECENT_WORKSPACES,
+) -> dict[str, Any]:
+    target = path or default_recents_path()
+    if not target.exists():
+        return {"path": str(target), "kept": 0, "removed": 0}
+    resolved = str(Path(workspace_path).expanduser().resolve())
+    records = load_workspace_recents(target, limit=limit, include_stale=True)
+    kept = [record for record in records if record["path"] != resolved]
+    target.write_text(
+        json.dumps({"version": 1, "roots": [_stored_recent(record) for record in kept]}, indent=2),
+        encoding="utf-8",
+    )
+    return {"path": str(target), "kept": len(kept), "removed": len(records) - len(kept)}
+
+
 def _stored_recent(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "path": record["path"],

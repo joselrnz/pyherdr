@@ -39,7 +39,7 @@ from ..config import load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
-from ..workspace_recents import load_workspace_recents
+from ..workspace_recents import load_workspace_recents, remove_workspace_recent
 from ..workspace_search import DEFAULT_IGNORE_NAMES, ExplorerRow, SearchRoot, search_workspace_rows
 from .client import PaneClient, ServerClient
 
@@ -1900,7 +1900,12 @@ class DirPickerScreen(ModalScreen[None]):
                 self._search_cache[cache_key] = (cached_at, filtered)
         if self._active_row >= len(self._search_rows):
             self._active_row = max(0, len(self._search_rows) - 1)
-        self._command_status = f"hidden stale root: {self._display_path(row.path)}"
+        removed_recent = False
+        if row.source == "recent":
+            summary = remove_workspace_recent(row.path)
+            removed_recent = int(summary["removed"]) > 0
+        action = "removed stale recent root" if removed_recent else "hidden stale root"
+        self._command_status = f"{action}: {self._display_path(row.path)}"
         self.run_worker(self._populate(), exclusive=True)
 
     def _active_search_row(self) -> ExplorerRow | None:
@@ -2620,7 +2625,7 @@ class PyHerdrTui(App):
         repo_root = _git_root(start)
         if repo_root:
             roots.append(SearchRoot(repo_root, label="repo root", source="repo"))
-        for recent in load_workspace_recents():
+        for recent in load_workspace_recents(include_stale=True):
             roots.append(SearchRoot(str(recent["path"]), label=str(recent["label"]), source="recent"))
         return self._dedupe_search_roots(roots)
 

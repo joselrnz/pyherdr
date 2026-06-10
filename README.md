@@ -165,8 +165,9 @@ Press `ctrl+f` inside the picker to search known workspace roots and recent
 repositories, then use arrow keys, Space, Enter, or mouse double-click to select
 and open a result. Search rows show their source, repo-root status, child-folder
 count, stale marker, and full path on a second line. Press `p` on a search result
-to jump to its parent folder, or `delete` on a stale result to hide it from the
-current search cache. Search runs through a debounced background worker, shows a
+to jump to its parent folder. Press `delete` on a stale recent result to remove
+it from `workspace_recents.json`; configured stale roots are hidden from the
+current search cache only. Search runs through a debounced background worker, shows a
 temporary searching row, ignores stale results from older queries, and reuses
 cached rows when the same query is typed again.
 

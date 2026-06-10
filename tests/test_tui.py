@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from pyherdr.presentation.tui import (
@@ -15,7 +16,7 @@ from pyherdr.presentation.tui import (
     WorkflowScreen,
 )
 from pyherdr.workflow import new_event
-from pyherdr.workspace_recents import record_workspace_recent
+from pyherdr.workspace_recents import load_workspace_recents, record_workspace_recent
 from pyherdr.workspace_search import ExplorerRow, SearchRoot
 
 STATE = {
@@ -873,6 +874,59 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("ghostc-plugin", text)
             self.assertIn("hidden stale root", self._widget_text(app.screen, "#dir-foot"))
 
+    async def test_dir_picker_search_delete_removes_stale_recent_from_recents_file(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            missing = root / "ghostc-plugin"
+            recents_path = runtime / "workspace_recents.json"
+            recents_path.parent.mkdir(parents=True)
+            recents_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "roots": [
+                            {"path": str(missing), "label": "ghostc-plugin", "last_opened": 1.0, "repo_root": ""},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                "os.environ",
+                {"PYHERDR_PORTABLE": "0", "PYHERDR_RUNTIME_DIR": str(runtime)},
+                clear=False,
+            ):
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+                async with app.run_test(size=(100, 30)) as pilot:
+                    await pilot.pause()
+                    app.push_screen(
+                        DirPickerScreen(
+                            str(root),
+                            lambda path: None,
+                            search_roots=[SearchRoot(str(missing), label="ghostc-plugin", source="recent")],
+                            search_debounce=0,
+                        )
+                    )
+                    await pilot.pause()
+                    app.screen.on_key(self._key_event("ctrl+f"))
+                    await app.screen.on_input_changed(self._changed_event("ghost"))
+                    await pilot.pause(0.2)
+                    self.assertIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
+
+                    app.screen.on_key(self._key_event("delete"))
+                    await pilot.pause()
+
+                    self.assertNotIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
+                    self.assertIn("removed stale recent root", self._widget_text(app.screen, "#dir-foot"))
+                    recents = load_workspace_recents(include_stale=True)
+
+        self.assertEqual(recents, [])
+
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
@@ -1140,6 +1194,55 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 quick_paths = app._workspace_picker_quick_paths()
 
         self.assertIn(("recent: recent project", os.path.abspath(recent)), quick_paths)
+
+    async def test_new_workspace_picker_search_roots_include_stale_recents(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            current = root / "current"
+            missing = root / "ghostc-plugin"
+            current.mkdir()
+            recents_path = runtime / "workspace_recents.json"
+            recents_path.parent.mkdir(parents=True)
+            recents_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "roots": [
+                            {"path": str(missing), "label": "ghostc-plugin", "last_opened": 1.0, "repo_root": ""},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                "os.environ",
+                {"PYHERDR_PORTABLE": "0", "PYHERDR_RUNTIME_DIR": str(runtime)},
+                clear=False,
+            ):
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+                app._state = {
+                    "focused_workspace_id": "wsx",
+                    "workspaces": [
+                        {
+                            "id": "wsx",
+                            "label": "current",
+                            "cwd": str(current),
+                            "tabs": [],
+                        }
+                    ],
+                }
+                app._workspace_id = "wsx"
+                quick_paths = app._workspace_picker_quick_paths()
+                roots = app._workspace_picker_search_roots()
+
+        self.assertNotIn(("recent: ghostc-plugin", os.path.abspath(missing)), quick_paths)
+        self.assertIn(SearchRoot(os.path.abspath(missing), label="ghostc-plugin", source="recent"), roots)
 
     async def test_new_workspace_picker_uses_configured_search_roots(self):
         import os

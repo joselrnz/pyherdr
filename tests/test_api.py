@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from pyherdr.api import dispatch
 from pyherdr.models import AppState
-from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents
+from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents, remove_workspace_recent
 
 
 class _FakeProcesses:
@@ -105,6 +105,38 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(summary["removed"], 1)
         self.assertEqual(summary["kept"], 1)
         self.assertEqual([record["label"] for record in after_prune], ["here"])
+
+    def test_workspace_recents_can_remove_one_root(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = root / "existing"
+            stale_one = root / "missing-one"
+            stale_two = root / "missing-two"
+            existing.mkdir()
+            recents_path = root / "workspace_recents.json"
+            recents_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "roots": [
+                            {"path": str(stale_one), "label": "one", "last_opened": 3.0, "repo_root": ""},
+                            {"path": str(stale_two), "label": "two", "last_opened": 2.0, "repo_root": ""},
+                            {"path": str(existing), "label": "here", "last_opened": 1.0, "repo_root": ""},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = remove_workspace_recent(stale_one, recents_path)
+            after_remove = load_workspace_recents(recents_path, include_stale=True)
+
+        self.assertEqual(summary["removed"], 1)
+        self.assertEqual(summary["kept"], 2)
+        self.assertEqual([record["label"] for record in after_remove], ["two", "here"])
 
     def test_pane_report_agent_changes_status(self):
         state = AppState.bootstrap(cwd="C:/work")
