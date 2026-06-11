@@ -2,8 +2,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from pyherdr.workspace_search import SearchRoot, search_workspace_rows
+from pyherdr.workspace_search import SearchRoot, row_to_dict, search_workspace_rows
 
 
 class WorkspaceSearchTests(unittest.TestCase):
@@ -65,6 +66,53 @@ class WorkspaceSearchTests(unittest.TestCase):
 
         self.assertEqual(shallow, [])
         self.assertEqual([row.label for row in deep], ["target-project"])
+
+    def test_persists_repo_metadata_and_reuses_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha-app"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            cache_path = root / "workspace_search_cache.json"
+
+            with (
+                patch("pyherdr.workspace_search._git_branch", return_value="main") as git_branch,
+                patch("pyherdr.workspace_search._git_dirty", return_value=True) as git_dirty,
+            ):
+                rows = search_workspace_rows("alpha", [SearchRoot(str(root))], cache_path=cache_path)
+
+            self.assertEqual(rows[0].branch, "main")
+            self.assertTrue(rows[0].dirty)
+            self.assertEqual(git_branch.call_count, 1)
+            self.assertEqual(git_dirty.call_count, 1)
+            self.assertTrue(cache_path.exists())
+
+            with (
+                patch("pyherdr.workspace_search._git_branch", side_effect=AssertionError("should use cache")),
+                patch("pyherdr.workspace_search._git_dirty", side_effect=AssertionError("should use cache")),
+            ):
+                cached_rows = search_workspace_rows("alpha", [SearchRoot(str(root))], cache_path=cache_path)
+
+        self.assertEqual(cached_rows[0].branch, "main")
+        self.assertTrue(cached_rows[0].dirty)
+        self.assertEqual(cached_rows[0].child_count, rows[0].child_count)
+
+    def test_row_to_dict_includes_cached_repo_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha-app"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+
+            with (
+                patch("pyherdr.workspace_search._git_branch", return_value="feature/cache"),
+                patch("pyherdr.workspace_search._git_dirty", return_value=False),
+            ):
+                row = search_workspace_rows("alpha", [SearchRoot(str(root))])[0]
+
+        payload = row_to_dict(row)
+        self.assertEqual(payload["branch"], "feature/cache")
+        self.assertFalse(payload["dirty"])
 
     @unittest.skipIf(os.name == "nt", "directory symlink creation is not reliable on all Windows setups")
     def test_skips_symlink_loops(self):

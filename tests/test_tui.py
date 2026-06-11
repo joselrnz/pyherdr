@@ -736,8 +736,12 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.screen.on_key(self._key_event("ctrl+f"))
             await app.screen.on_input_changed(self._changed_event("alpha"))
-            await pilot.pause()
-            text = self._screen_text(app.screen, "#dir-list")
+            text = ""
+            for _ in range(10):
+                await pilot.pause(0.1)
+                text = self._screen_text(app.screen, "#dir-list")
+                if "searching roots" not in text:
+                    break
             self.assertIn("alpha-app", text)
             self.assertNotIn("beta-tool", text)
 
@@ -917,6 +921,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             source="recent",
             repo_root=os.path.abspath(root),
             child_count=1,
+            branch="main",
+            dirty=True,
         )
         screen = DirPickerScreen(root, lambda path: None)
         plain = screen._search_row_text(row, 0).plain
@@ -926,6 +932,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recent", plain)
         self.assertIn("repo root", plain)
         self.assertIn("1 folder", plain)
+        self.assertIn("branch main", plain)
+        self.assertIn("dirty", plain)
         self.assertIn(os.path.abspath(root).replace("\\", "/"), plain)
 
     def test_dir_picker_search_menu_items_reflect_stale_state(self):
@@ -1095,7 +1103,13 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.screen.on_key(self._key_event("ctrl+f"))
             await app.screen.on_input_changed(self._changed_event("alpha"))
-            await pilot.pause()
+            text = ""
+            for _ in range(10):
+                await pilot.pause(0.1)
+                text = self._screen_text(app.screen, "#dir-list")
+                if "searching roots" not in text:
+                    break
+            self.assertIn("alpha-00", text)
 
             app.screen.on_key(self._key_event("pagedown"))
             await pilot.pause()

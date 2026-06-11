@@ -27,7 +27,7 @@ from .server import (
 from .session import DEFAULT_SESSION, list_session_names, session_runtime_dir
 from .store import load_state
 from .workspace_recents import load_workspace_recents, prune_workspace_recents
-from .workspace_search import SearchRoot, row_to_dict, search_workspace_rows
+from .workspace_search import SearchRoot, default_workspace_search_cache_path, row_to_dict, search_workspace_rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -654,6 +654,8 @@ def run_workspace_search(args) -> int:
         max_results=max(1, max_results),
         ignore_names=ignore_names,
         include_hidden=include_hidden,
+        cache_path=default_workspace_search_cache_path(),
+        metadata_ttl_seconds=max(0, config.workspace.search_cache_ttl_seconds),
     )
     if args.json:
         print(

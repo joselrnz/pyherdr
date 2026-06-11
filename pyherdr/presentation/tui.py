@@ -24,6 +24,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
@@ -40,7 +41,13 @@ from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents, remove_workspace_recent
-from ..workspace_search import DEFAULT_IGNORE_NAMES, ExplorerRow, SearchRoot, search_workspace_rows
+from ..workspace_search import (
+    DEFAULT_IGNORE_NAMES,
+    ExplorerRow,
+    SearchRoot,
+    default_workspace_search_cache_path,
+    search_workspace_rows,
+)
 from .client import PaneClient, ServerClient
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
@@ -1446,6 +1453,7 @@ class DirPickerScreen(ModalScreen[None]):
         search_ignore_names: list[str] | tuple[str, ...] | None = None,
         search_include_hidden: bool = False,
         search_cache_ttl_seconds: int = 300,
+        search_metadata_cache_path: str | os.PathLike[str] | None = None,
     ) -> None:
         super().__init__()
         self._cwd = os.path.abspath(start or os.getcwd())
@@ -1465,6 +1473,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._search_include_hidden = search_include_hidden
         self._search_cache_ttl_seconds = max(0, search_cache_ttl_seconds)
         self._search_cache: dict[SearchCacheKey, tuple[float, list[ExplorerRow]]] = {}
+        self._search_metadata_cache_path = search_metadata_cache_path
         self._pending_search_key: SearchCacheKey | None = None
         self._search_revision = 0
         self._search_debounce = max(0.0, search_debounce)
@@ -1646,6 +1655,8 @@ class DirPickerScreen(ModalScreen[None]):
                 max_results=self._search_max_results,
                 ignore_names=self._search_ignore_names,
                 include_hidden=self._search_include_hidden,
+                cache_path=None if self._search_metadata_cache_path is None else Path(self._search_metadata_cache_path),
+                metadata_ttl_seconds=self._search_cache_ttl_seconds,
             )
         except asyncio.CancelledError:
             if self._pending_search_key == cache_key:
@@ -1704,6 +1715,9 @@ class DirPickerScreen(ModalScreen[None]):
                 facts.append(f"repo {os.path.basename(row.repo_root) or row.repo_root}")
         if row.child_count:
             facts.append(self._folder_count_text(row.child_count))
+        if row.branch:
+            facts.append(f"branch {row.branch}")
+            facts.append("dirty" if row.dirty else "clean")
         if row.stale:
             facts.append("stale")
         return facts
@@ -2902,6 +2916,7 @@ class PyHerdrTui(App):
                 search_ignore_names=self._config.workspace.search_ignore,
                 search_include_hidden=self._config.workspace.search_include_hidden,
                 search_cache_ttl_seconds=self._config.workspace.search_cache_ttl_seconds,
+                search_metadata_cache_path=default_workspace_search_cache_path(),
             )
         )
 
