@@ -384,6 +384,70 @@ class HelpScreen(ModalScreen[None]):
         event.stop()
 
 
+def _dir_picker_help_text() -> Text:
+    text = Text()
+    text.append("common\n", style="bold")
+    text.append("  ↑/↓          move selection\n")
+    text.append("  Enter        open highlighted folder\n")
+    text.append("  Alt+O        open current folder\n")
+    text.append("  Esc          cancel\n")
+    text.append("\nshortcuts\n", style="bold")
+    text.append("  Backspace    go up one folder\n")
+    text.append("  Ctrl+H       jump home\n")
+    text.append("  Ctrl+W       jump current workspace\n")
+    text.append("  Ctrl+R       jump repo root\n")
+    text.append("  Ctrl+F       search mode\n")
+    text.append("  Ctrl+L       path mode\n")
+    text.append("\ncommands\n", style="bold")
+    text.append("  ls           refresh current folder\n")
+    text.append("  ls text      filter current folder\n")
+    text.append("  cd path      change folder\n")
+    text.append("  pwd          show current path\n")
+    text.append("  open path    open folder\n")
+    text.append("\nsearch mode\n", style="bold")
+    text.append("  PageUp/Down  page results\n")
+    text.append("  Space        select result\n")
+    text.append("  p            open parent\n")
+    text.append("  y            copy path\n")
+    text.append("  Delete       hide stale recent\n")
+    text.append("  Right-click  result actions\n")
+    return text
+
+
+class DirPickerHelpScreen(ModalScreen[None]):
+    """Focused help for the workspace folder picker."""
+
+    DEFAULT_CSS = """
+    DirPickerHelpScreen { align: center middle; background: $ph-base 70%; }
+    #dir-help-box {
+        width: 46;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        color: $ph-text;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 2;
+    }
+    #dir-help-foot { color: $ph-subtext0; padding: 1 2 0 2; }
+    """
+
+    def compose(self) -> ComposeResult:
+        box = Static(_dir_picker_help_text(), id="dir-help-box")
+        box.border_title = "folder picker help"
+        yield box
+        yield Static("esc / enter / ? to close", id="dir-help-foot")
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "enter", "question_mark", "q"):
+            self.dismiss()
+        event.stop()
+
+    def on_click(self, event: events.Click) -> None:
+        self.dismiss()
+        event.stop()
+
+
 def _fmt_mb(num_bytes: int) -> str:
     """Render a byte count as megabytes (task-manager style)."""
     return f"{num_bytes / 1048576:.1f} MB"
@@ -1351,7 +1415,18 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-stale { color: $ph-subtext0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
-    #dir-foot { color: $ph-subtext0; height: auto; min-height: 2; padding: 1 0 0 0; }
+    #dir-footer { height: auto; padding: 1 0 0 0; }
+    #dir-foot { width: 1fr; color: $ph-subtext0; height: auto; min-height: 1; }
+    .dir-help-button {
+        width: 10;
+        height: 1;
+        background: $ph-surface0;
+        color: $ph-accent;
+        content-align: center middle;
+        text-style: bold;
+        padding: 0 1;
+    }
+    .dir-help-button:hover { background: $ph-accent; color: $ph-base; }
     """
 
     def __init__(
@@ -1403,7 +1478,9 @@ class DirPickerScreen(ModalScreen[None]):
                     yield Static("", id="dir-path")
                     yield Clickable("Open Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
             yield VerticalScroll(id="dir-list")
-            yield Static("click a folder to enter  ·  open current path  ·  esc cancel", id="dir-foot")
+            with Horizontal(id="dir-footer"):
+                yield Static("type to filter · ↑/↓ move · Enter open · Esc cancel", id="dir-foot")
+                yield Clickable("? Help", "dir_help", classes="dir-help-button", id="dir-help")
 
     async def on_mount(self) -> None:
         self.query_one("#dir-box", Vertical).border_title = "choose workspace folder"
@@ -1607,13 +1684,12 @@ class DirPickerScreen(ModalScreen[None]):
 
     def _update_search_footer(self) -> None:
         self._update_footer(
-            "search mode · ↑/↓ move · pgup/pgdn page · space select · enter open · "
-            "p parent · y copy · delete hide stale · ctrl+l path mode · esc cancel"
+            "search mode · ↑/↓ move · Enter open · Space select · Esc cancel"
         )
 
     def _update_browse_footer(self) -> None:
         self._update_footer(
-            "↑/↓ · Enter · Alt+O · Bksp · ^H home · ^W ws · ^R repo · ^F search"
+            "type to filter · ↑/↓ move · Enter open · Esc cancel"
         )
 
     def _update_footer(self, help_text: str) -> None:
@@ -1786,6 +1862,8 @@ class DirPickerScreen(ModalScreen[None]):
         if message.action == "dir_open":
             self._on_select(self._cwd)
             self.dismiss()
+        elif message.action == "dir_help":
+            self.app.push_screen(DirPickerHelpScreen())
         elif message.action == "dir_up":
             self._enter_browse_path(os.path.dirname(self._cwd))
         elif message.action == "dir_quick" and message.arg and os.path.isdir(message.arg):
@@ -1830,6 +1908,10 @@ class DirPickerScreen(ModalScreen[None]):
         if event.key == "escape":
             event.stop()
             self.dismiss()
+        elif event.key in ("question_mark", "f1"):
+            event.stop()
+            event.prevent_default()
+            self.app.push_screen(DirPickerHelpScreen())
         elif event.key == "ctrl+f":
             event.stop()
             event.prevent_default()

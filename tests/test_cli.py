@@ -43,10 +43,10 @@ class CliTests(unittest.TestCase):
         plain = html.unescape(svg).replace("\xa0", " ")
         self.assertIn("choose workspace folder", plain)
         self.assertIn("Open Folder", plain)
+        self.assertIn("Help", plain)
+        self.assertIn("type to filter", plain)
         self.assertIn("Enter", plain)
-        self.assertIn("^H home", plain)
-        self.assertIn("^W ws", plain)
-        self.assertIn("^R repo", plain)
+        self.assertNotIn("^W ws", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)
 

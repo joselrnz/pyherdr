@@ -4,6 +4,7 @@ import unittest
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
+    DirPickerHelpScreen,
     DirPickerScreen,
     DirSearchMenuScreen,
     FanoutScreen,
@@ -555,7 +556,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     DirPickerScreen(child, selected.append, quick_paths=[("current workspace", workspace)])
                 )
                 await pilot.pause()
-                self.assertIn("^W ws", self._widget_text(app.screen, "#dir-foot"))
+                self.assertIn("type to filter", self._widget_text(app.screen, "#dir-foot"))
+                self.assertNotIn("^W ws", self._widget_text(app.screen, "#dir-foot"))
 
                 app.screen.on_key(self._key_event("backspace"))
                 await pilot.pause()
@@ -574,6 +576,26 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.screen._cwd, os.path.abspath(repo))
 
         self.assertEqual(selected, [])
+
+    async def test_dir_picker_help_button_opens_shortcut_help(self):
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, lambda path: None))
+            await pilot.pause()
+            self.assertIn("Help", self._widget_text(app.screen, "#dir-help"))
+
+            app.screen.on_activated(self._activated("dir_help", None))
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, DirPickerHelpScreen)
+            help_text = self._widget_text(app.screen, "#dir-help-box")
+            self.assertIn("Ctrl+W", help_text)
+            self.assertIn("ls text", help_text)
+            self.assertIn("search mode", help_text)
 
     async def test_dir_picker_input_accepts_safe_navigation_commands(self):
         import os
