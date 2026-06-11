@@ -248,6 +248,9 @@ class DemoScreenshotClient:
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         return DEMO_OUTPUTS.get(pane_id, "")
 
+    def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
+        return {"alt_screen": False, "mouse_reporting": False}
+
     def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
         return {"type": "pane_output_wait", "changed": {}, "versions": versions, "timed_out": True}
 

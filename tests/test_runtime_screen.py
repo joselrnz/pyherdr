@@ -111,6 +111,25 @@ class TerminalScreenTests(unittest.TestCase):
         self.assertIn("line0", rendered)
         self.assertNotIn("line7", rendered)
 
+    def test_terminal_metadata_tracks_alt_screen_and_mouse_reporting_modes(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+
+        self.assertFalse(screen.metadata()["alt_screen"])
+        self.assertFalse(screen.metadata()["mouse_reporting"])
+
+        screen.feed("\x1b[?1049h")
+        self.assertTrue(screen.metadata()["alt_screen"])
+        self.assertFalse(screen.metadata()["mouse_reporting"])
+
+        screen.feed("\x1b[?1000h")
+        self.assertTrue(screen.metadata()["mouse_reporting"])
+
+        screen.feed("\x1b[?1000l")
+        self.assertFalse(screen.metadata()["mouse_reporting"])
+
+        screen.feed("\x1b[?1049l")
+        self.assertFalse(screen.metadata()["alt_screen"])
+
 
 if __name__ == "__main__":
     unittest.main()

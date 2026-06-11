@@ -30,6 +30,10 @@ class PaneClient(Protocol):
         """Wait until any watched pane has a newer output generation."""
         ...
 
+    def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
+        """Return terminal mode metadata from the latest pane read."""
+        ...
+
     def send_text(self, pane_id: str, text: str) -> None:
         """Type text into a pane."""
         ...
@@ -118,6 +122,9 @@ class PaneClient(Protocol):
 class ServerClient:
     """`PaneClient` backed by the PyHerdr server over the local socket."""
 
+    def __init__(self) -> None:
+        self._terminal_metadata: dict[str, dict[str, bool]] = {}
+
     def _request(self, method: str, **params: Any) -> dict[str, Any]:
         return ensure_request({"id": "tui", "method": method, "params": params})
 
@@ -131,7 +138,17 @@ class ServerClient:
 
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         response = self._request("pane.read", pane_id=pane_id, lines=lines, styled=styled, cursor=cursor)
-        return response.get("result", {}).get("output", "")
+        result = response.get("result", {})
+        terminal = result.get("terminal", {})
+        if isinstance(terminal, dict):
+            self._terminal_metadata[pane_id] = {
+                "alt_screen": bool(terminal.get("alt_screen")),
+                "mouse_reporting": bool(terminal.get("mouse_reporting")),
+            }
+        return result.get("output", "")
+
+    def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
+        return self._terminal_metadata.get(pane_id, {"alt_screen": False, "mouse_reporting": False})
 
     def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
         response = self._request("pane.wait_output", versions=versions, timeout=timeout)

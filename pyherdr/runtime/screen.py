@@ -20,6 +20,14 @@ _ANSI_NAMED = {
     "cyan": 6,
     "white": 7,
 }
+_PRIVATE_MODE_SHIFT = 5
+_ALT_SCREEN_MODES = {47, 1047, 1049}
+_MOUSE_REPORTING_MODES = {1000, 1002, 1003}
+
+
+def _private_mode(mode: int) -> int:
+    """Return pyte's internal representation for DEC private modes."""
+    return mode << _PRIVATE_MODE_SHIFT
 
 
 def _color_param(color: str, foreground: bool) -> str:
@@ -122,6 +130,14 @@ class TerminalScreen:
             "total_lines": len(self._document_lines()),
             "at_top": self._offset_from_bottom == max_offset,
             "at_bottom": self._offset_from_bottom == 0,
+        }
+
+    def metadata(self) -> dict[str, bool]:
+        """Return terminal mode metadata needed by input routing."""
+        modes = self._screen.mode
+        return {
+            "alt_screen": any(_private_mode(mode) in modes for mode in _ALT_SCREEN_MODES),
+            "mouse_reporting": any(_private_mode(mode) in modes for mode in _MOUSE_REPORTING_MODES),
         }
 
     def render_styled(self, cursor: bool = False) -> str:

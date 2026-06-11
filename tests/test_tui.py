@@ -86,6 +86,7 @@ class FakeClient:
         self.fanouts: list[dict] = []
         self.reads: list[tuple[str, int, bool, bool]] = []
         self.waits: list[dict[str, int]] = []
+        self.terminal_metadata: dict[str, dict[str, bool]] = {}
 
     def state(self) -> dict:
         return STATE
@@ -96,6 +97,9 @@ class FakeClient:
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         self.reads.append((pane_id, lines, styled, cursor))
         return f"SCREEN:{pane_id}"
+
+    def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
+        return self.terminal_metadata.get(pane_id, {"alt_screen": False, "mouse_reporting": False})
 
     def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict:
         self.waits.append(dict(versions))
@@ -1493,6 +1497,42 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("pagedown")
             await pilot.pause()
             self.assertIn(("1-1", "down"), client.scrolled)
+
+    async def test_mouse_wheel_host_scrolls_plain_terminal(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._terminal_metadata["1-1"] = {"alt_screen": False, "mouse_reporting": False}
+
+            app._handle_pane_wheel("1-1", "up", 7, 3)
+
+            self.assertEqual(client.scrolled, [("1-1", "up")])
+            self.assertEqual(client.sent_text, [])
+
+    async def test_mouse_wheel_forwards_when_pane_owns_mouse(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._terminal_metadata["1-1"] = {"alt_screen": False, "mouse_reporting": True}
+
+            app._handle_pane_wheel("1-1", "down", 7, 3)
+
+            self.assertEqual(client.scrolled, [])
+            self.assertEqual(client.sent_text, [("1-1", "\x1b[<65;7;3M")])
+
+    async def test_mouse_wheel_forwards_in_alt_screen(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._terminal_metadata["1-1"] = {"alt_screen": True, "mouse_reporting": False}
+
+            app._handle_pane_wheel("1-1", "up", 2, 4)
+
+            self.assertEqual(client.scrolled, [])
+            self.assertEqual(client.sent_text, [("1-1", "\x1b[<64;2;4M")])
 
     async def test_tick_does_not_poll_pane_output(self):
         client = FakeClient()

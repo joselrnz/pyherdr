@@ -246,6 +246,17 @@ class Activated(Message):
         super().__init__()
 
 
+class PaneWheel(Message):
+    """Posted when a pane receives mouse-wheel input."""
+
+    def __init__(self, pane_id: str, direction: str, x: int, y: int) -> None:
+        self.pane_id = pane_id
+        self.direction = direction
+        self.x = x
+        self.y = y
+        super().__init__()
+
+
 class Clickable(Static):
     """A Static that posts an :class:`Activated` message when clicked."""
 
@@ -2440,11 +2451,11 @@ class PaneView(Static):
             self.post_message(Activated("focus_pane", self.pane_id))
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.post_message(Activated("pane_scroll_up", self.pane_id))
+        self.post_message(PaneWheel(self.pane_id, "up", int(event.x) + 1, int(event.y) + 1))
         event.stop()
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        self.post_message(Activated("pane_scroll_down", self.pane_id))
+        self.post_message(PaneWheel(self.pane_id, "down", int(event.x) + 1, int(event.y) + 1))
         event.stop()
 
 
@@ -2546,6 +2557,7 @@ class PyHerdrTui(App):
         self._tab_id: str | None = None
         self._pane_id: str | None = None
         self._terminal_versions: dict[str, int] = {}
+        self._terminal_metadata: dict[str, dict[str, bool]] = {}
         self._prefix = False
         self._zoom = False
         self._resize = False
@@ -2771,6 +2783,10 @@ class PyHerdrTui(App):
             self._dispatch_activated(message.action, message.arg)
         except Exception:
             pass
+
+    def on_pane_wheel(self, message: PaneWheel) -> None:
+        message.stop()
+        self._handle_pane_wheel(message.pane_id, message.direction, message.x, message.y)
 
     def _dispatch_activated(self, action: str, arg: str | None) -> None:
         if action == "focus_pane" and arg:
@@ -3829,6 +3845,32 @@ class PyHerdrTui(App):
             return
         self._update_pane_contents({pane_id})
 
+    def _handle_pane_wheel(self, pane_id: str, direction: str, x: int = 1, y: int = 1) -> None:
+        if self._pane_owns_wheel(pane_id):
+            try:
+                self._client.send_text(pane_id, self._xterm_wheel_sequence(direction, x, y))
+            except Exception:
+                return
+            return
+        self._scroll_pane(pane_id, direction)
+
+    def _pane_owns_wheel(self, pane_id: str) -> bool:
+        metadata = self._terminal_metadata.get(pane_id, {})
+        return bool(metadata.get("alt_screen") or metadata.get("mouse_reporting"))
+
+    def _read_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
+        try:
+            return self._client.pane_terminal_metadata(pane_id)
+        except Exception:
+            return {"alt_screen": False, "mouse_reporting": False}
+
+    @staticmethod
+    def _xterm_wheel_sequence(direction: str, x: int, y: int) -> str:
+        button = 64 if direction == "up" else 65
+        col = max(1, int(x))
+        row = max(1, int(y))
+        return f"\x1b[<{button};{col};{row}M"
+
     def _copy_pane_output(self, pane_id: str | None) -> None:
         """Copy a pane's text (visible + scrollback) to the system clipboard."""
         if not pane_id:
@@ -3920,6 +3962,7 @@ class PyHerdrTui(App):
                 output = self._client.pane_read(
                     view.pane_id, lines=400, styled=True, cursor=view.pane_id == self._pane_id
                 )
+                self._terminal_metadata[view.pane_id] = self._read_terminal_metadata(view.pane_id)
             except Exception:
                 continue
             if output and output.strip():

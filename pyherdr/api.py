@@ -521,6 +521,7 @@ def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManag
     pane = state.require_pane(_required(params, "pane_id"))
     lines = int(params.get("lines") or 80)
     styled = bool(params.get("styled"))
+    terminal = {"alt_screen": False, "mouse_reporting": False}
     if processes is not None:
         try:
             # A terminal session, once started, is the source of truth for the
@@ -533,6 +534,9 @@ def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManag
             else:
                 output = processes.read(pane.id, lines)
                 _update_status_from_screen(pane, output)
+            metadata = getattr(processes, "metadata", None)
+            if callable(metadata):
+                terminal.update({key: bool(value) for key, value in metadata(pane.id).items()})
         except KeyError:
             output = "\n".join(pane.output[-lines:])
     else:
@@ -541,6 +545,7 @@ def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManag
         "type": "pane_read",
         "pane_id": pane.id,
         "output": output,
+        "terminal": terminal,
     }
 
 

@@ -48,6 +48,9 @@ class _ScrollProcesses:
     def scroll(self, pane_id: str, direction: str) -> None:
         self.scrolled.append((pane_id, direction))
 
+    def read(self, pane_id: str, lines=None) -> str:
+        return "terminal output"
+
     def viewport(self, pane_id: str) -> dict[str, int | bool]:
         return {
             "offset_from_bottom": 3,
@@ -57,6 +60,9 @@ class _ScrollProcesses:
             "at_top": False,
             "at_bottom": False,
         }
+
+    def metadata(self, pane_id: str) -> dict[str, bool]:
+        return {"alt_screen": True, "mouse_reporting": False}
 
 
 class ApiTests(unittest.TestCase):
@@ -126,6 +132,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(processes.scrolled, [(pane.id, "top")])
         self.assertEqual(response["result"]["direction"], "top")
         self.assertEqual(response["result"]["viewport"]["offset_from_bottom"], 3)
+
+    def test_pane_read_includes_terminal_metadata(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        processes = _ScrollProcesses()
+
+        response = dispatch(
+            state,
+            {"id": "read", "method": "pane.read", "params": {"pane_id": pane.id}},
+            processes,
+        )
+
+        self.assertEqual(response["result"]["terminal"]["alt_screen"], True)
+        self.assertEqual(response["result"]["terminal"]["mouse_reporting"], False)
 
     def test_workspace_recents_can_include_and_prune_stale_roots(self):
         import json

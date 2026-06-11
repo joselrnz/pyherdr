@@ -123,6 +123,11 @@ class TerminalSession:
         with self._lock:
             return self._screen.viewport()
 
+    def metadata(self) -> dict[str, bool]:
+        """Return terminal mode metadata used by UI input routing."""
+        with self._lock:
+            return self._screen.metadata()
+
     @property
     def generation(self) -> int:
         """Return the current output generation for event-driven refresh."""
@@ -298,6 +303,10 @@ class TerminalManager:
     def viewport(self, pane_id: str) -> dict[str, int | bool]:
         """Return a pane's scrollback viewport state."""
         return self._require(pane_id).viewport()
+
+    def metadata(self, pane_id: str) -> dict[str, bool]:
+        """Return a pane's terminal mode metadata."""
+        return self._require(pane_id).metadata()
 
     def stop(self, pane_id: str) -> bool:
         """Stop a pane's terminal; return ``False`` if there was none."""
