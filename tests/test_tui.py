@@ -477,7 +477,9 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         os.makedirs(nested)
         os.makedirs(beta)
         selected: list[str] = []
+        copied: list[str] = []
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app.copy_to_clipboard = lambda text: copied.append(text)  # type: ignore[method-assign]
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             app.push_screen(DirPickerScreen(base, selected.append))
@@ -490,6 +492,11 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             listing = self._screen_text(app.screen, "#dir-list")
             self.assertIn("> alpha/", listing)
             self.assertIn("  beta/", listing)
+
+            app.screen.on_key(self._key_event("y"))
+            await pilot.pause()
+            self.assertEqual(copied[-1], os.path.abspath(alpha))
+            self.assertIn("copied path:", self._widget_text(app.screen, "#dir-foot"))
 
             app.screen.on_input_submitted(self._submit_event(""))
             await pilot.pause()
@@ -597,6 +604,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             help_text = self._widget_text(app.screen, "#dir-help-box")
             self.assertIn("Ctrl+W", help_text)
             self.assertIn("ls text", help_text)
+            self.assertIn("copy highlighted path", help_text)
             self.assertIn("copy path", help_text)
             self.assertIn("search mode", help_text)
 

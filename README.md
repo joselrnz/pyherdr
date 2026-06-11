@@ -163,7 +163,8 @@ open, or press Esc to cancel. The picker also has a `Help` button plus `?` /
 `F1` for the full shortcut and command reference.
 `Backspace` goes up one folder, `Ctrl+H` jumps home, `Ctrl+W` jumps back to the
 current workspace root, and `Ctrl+R` jumps to the current git repo root when one
-is available. Pressing Enter on a real path jumps there. The input also accepts safe explorer
+is available. Press `y` in browse mode to copy the highlighted folder path.
+Pressing Enter on a real path jumps there. The input also accepts safe explorer
 commands: `ls` refreshes, `ls text` filters, `cd path` changes folder, `pwd`
 prints the current path in the footer, `copy path` copies the resolved folder,
 and `open path` opens that folder. File paths resolve to their containing folder

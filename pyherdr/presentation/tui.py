@@ -398,6 +398,7 @@ def _dir_picker_help_text() -> Text:
     text.append("  Ctrl+R       jump repo root\n")
     text.append("  Ctrl+F       search mode\n")
     text.append("  Ctrl+L       path mode\n")
+    text.append("  y            copy highlighted path\n")
     text.append("\ncommands\n", style="bold")
     text.append("  ls           refresh current folder\n")
     text.append("  ls text      filter current folder\n")
@@ -1966,6 +1967,10 @@ class DirPickerScreen(ModalScreen[None]):
             event.stop()
             event.prevent_default()
             self._jump_to_repo_root()
+        elif not self._search_mode and event.key in {"y", "ctrl+y"}:
+            event.stop()
+            event.prevent_default()
+            self._copy_active_browse_path()
         elif not self._search_mode and event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
@@ -2073,6 +2078,17 @@ class DirPickerScreen(ModalScreen[None]):
         if not self._browse_rows:
             return None
         return self._browse_rows[max(0, min(len(self._browse_rows) - 1, self._active_browse_row))]
+
+    def _copy_active_browse_path(self) -> None:
+        row = self._active_browse_row_record()
+        if row is None:
+            self._copy_search_path(self._cwd)
+            return
+        if row.action == "dir_up":
+            target = os.path.dirname(os.path.abspath(self._cwd))
+        else:
+            target = row.arg or self._cwd
+        self._copy_search_path(target)
 
     def _move_active_search_row(self, delta: int) -> None:
         if not self._search_rows:
