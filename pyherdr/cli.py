@@ -8,6 +8,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .config import load_config
@@ -27,7 +28,15 @@ from .server import (
 from .session import DEFAULT_SESSION, list_session_names, session_runtime_dir
 from .store import load_state
 from .workspace_recents import load_workspace_recents, prune_workspace_recents
-from .workspace_search import SearchRoot, default_workspace_search_cache_path, row_to_dict, search_workspace_rows
+from .workspace_search import (
+    SearchRoot,
+    default_workspace_search_cache_path,
+    load_workspace_search_cache,
+    prune_workspace_search_cache,
+    refresh_workspace_search_cache,
+    row_to_dict,
+    search_workspace_rows,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -194,6 +203,31 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_recents.add_argument("--all", action="store_true", help="include stale roots")
     workspace_recents.add_argument("--json", action="store_true", help="print machine-readable JSON")
     workspace_recents.add_argument("--prune", action="store_true", help="remove stale roots from the recents file")
+    workspace_index = workspace_sub.add_parser("index", help="inspect or maintain workspace search metadata")
+    workspace_index.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    workspace_index.add_argument("--all", action="store_true", help="include stale cache entries")
+    workspace_index.add_argument("--refresh", action="store_true", help="refresh repo metadata from workspace roots")
+    workspace_index.add_argument("--prune", action="store_true", help="remove stale or missing cache entries")
+    workspace_index.add_argument(
+        "--root",
+        action="append",
+        default=[],
+        help="root directory to scan; repeat to scan several roots instead of configured roots",
+    )
+    workspace_index.add_argument("--max-depth", type=int, help="override workspace.search_max_depth")
+    workspace_index.add_argument(
+        "--max-entries",
+        type=int,
+        default=500,
+        help="maximum repo roots to index during refresh",
+    )
+    workspace_index.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        help="directory name to skip; repeat to override workspace.search_ignore",
+    )
+    workspace_index.add_argument("--include-hidden", action="store_true", help="include hidden folders")
     workspace_search = workspace_sub.add_parser("search", help="search configured workspace roots")
     workspace_search.add_argument("query")
     workspace_search.add_argument("--json", action="store_true", help="print machine-readable JSON")
@@ -612,6 +646,8 @@ def run_workspace(args) -> int:
         )
     elif args.workspace_command == "recents":
         return run_workspace_recents(args)
+    elif args.workspace_command == "index":
+        return run_workspace_index(args)
     elif args.workspace_command == "search":
         return run_workspace_search(args)
     else:
@@ -637,6 +673,65 @@ def run_workspace_recents(args) -> int:
     for record in records:
         suffix = " [stale]" if record["stale"] else ""
         print(f"{record['label']}\t{record['path']}{suffix}")
+    return 0
+
+
+def run_workspace_index(args) -> int:
+    config = load_config()
+    cache_path = default_workspace_search_cache_path()
+    summaries: list[dict[str, Any]] = []
+    if args.refresh:
+        roots = _workspace_search_roots(args.root, config.workspace.search_roots)
+        ignore_names = tuple(args.ignore) if args.ignore else tuple(config.workspace.search_ignore)
+        max_depth = config.workspace.search_max_depth if args.max_depth is None else args.max_depth
+        include_hidden = bool(args.include_hidden or config.workspace.search_include_hidden)
+        summaries.append(
+            refresh_workspace_search_cache(
+                roots,
+                max_depth=max(0, max_depth),
+                max_entries=max(0, args.max_entries),
+                ignore_names=ignore_names,
+                include_hidden=include_hidden,
+                cache_path=cache_path,
+            )
+        )
+    if args.prune:
+        summaries.append(prune_workspace_search_cache(cache_path))
+    entries = load_workspace_search_cache(cache_path, include_stale=args.all)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "cache_path": str(cache_path),
+                    "summaries": summaries,
+                    "entries": entries,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    for summary in summaries:
+        if "indexed" in summary:
+            print(
+                "indexed "
+                f"{summary['indexed']} repo root(s); "
+                f"scanned {summary['scanned']}; cached {summary['cached']}"
+            )
+        else:
+            print(f"removed {summary['removed']} stale/missing cache entries; kept {summary['kept']}")
+    if not entries:
+        print("workspace search index is empty")
+        return 0
+    for entry in entries:
+        flags: list[str] = []
+        if entry.get("branch"):
+            flags.append(str(entry["branch"]))
+        if entry.get("dirty"):
+            flags.append("dirty")
+        if entry.get("stale"):
+            flags.append("stale")
+        suffix = f"\t{' '.join(flags)}" if flags else ""
+        print(f"{entry['label']}\t{entry['path']}{suffix}")
     return 0
 
 

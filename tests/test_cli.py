@@ -2,6 +2,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from pyherdr.cli import build_parser
 from pyherdr.demo_screenshot import render_demo_screenshot
@@ -111,6 +112,39 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.ignore, ["vendor"])
         self.assertTrue(args.include_hidden)
 
+    def test_workspace_index_accepts_refresh_prune_and_scan_overrides(self):
+        args = build_parser().parse_args(
+            [
+                "workspace",
+                "index",
+                "--json",
+                "--all",
+                "--refresh",
+                "--prune",
+                "--root",
+                "C:/code",
+                "--max-depth",
+                "2",
+                "--max-entries",
+                "7",
+                "--ignore",
+                "vendor",
+                "--include-hidden",
+            ]
+        )
+
+        self.assertEqual(args.command, "workspace")
+        self.assertEqual(args.workspace_command, "index")
+        self.assertTrue(args.json)
+        self.assertTrue(args.all)
+        self.assertTrue(args.refresh)
+        self.assertTrue(args.prune)
+        self.assertEqual(args.root, ["C:/code"])
+        self.assertEqual(args.max_depth, 2)
+        self.assertEqual(args.max_entries, 7)
+        self.assertEqual(args.ignore, ["vendor"])
+        self.assertTrue(args.include_hidden)
+
     def test_workspace_search_json_outputs_matching_repositories(self):
         import json
         import tempfile
@@ -146,6 +180,46 @@ class CliTests(unittest.TestCase):
         self.assertEqual([row["label"] for row in payload["results"]], ["alpha-api"])
         self.assertEqual(payload["results"][0]["kind"], "repo")
         self.assertNotIn("alpha-hidden", json.dumps(payload))
+
+    def test_workspace_index_refresh_json_outputs_cached_repositories(self):
+        import json
+        import tempfile
+
+        from pyherdr.cli import run_workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha-api"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            cache_path = root / "workspace_search_cache.json"
+            args = build_parser().parse_args(
+                [
+                    "workspace",
+                    "index",
+                    "--refresh",
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--max-depth",
+                    "1",
+                ]
+            )
+            stdout = StringIO()
+            with (
+                patch("pyherdr.cli.default_workspace_search_cache_path", return_value=cache_path),
+                patch("pyherdr.workspace_search._git_branch", return_value="main"),
+                patch("pyherdr.workspace_search._git_dirty", return_value=True),
+                redirect_stdout(stdout),
+            ):
+                exit_code = run_workspace(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["summaries"][0]["indexed"], 1)
+        self.assertEqual(payload["entries"][0]["label"], "alpha-api")
+        self.assertEqual(payload["entries"][0]["branch"], "main")
+        self.assertTrue(payload["entries"][0]["dirty"])
 
     def test_pane_fanout_accepts_targets_and_execute_flag(self):
         args = build_parser().parse_args(

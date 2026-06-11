@@ -1,10 +1,18 @@
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pyherdr.workspace_search import SearchRoot, row_to_dict, search_workspace_rows
+from pyherdr.workspace_search import (
+    SearchRoot,
+    load_workspace_search_cache,
+    prune_workspace_search_cache,
+    refresh_workspace_search_cache,
+    row_to_dict,
+    search_workspace_rows,
+)
 
 
 class WorkspaceSearchTests(unittest.TestCase):
@@ -113,6 +121,36 @@ class WorkspaceSearchTests(unittest.TestCase):
         payload = row_to_dict(row)
         self.assertEqual(payload["branch"], "feature/cache")
         self.assertFalse(payload["dirty"])
+
+    def test_refreshes_and_prunes_workspace_search_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha-app"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            cache_path = root / "workspace_search_cache.json"
+
+            with (
+                patch("pyherdr.workspace_search._git_branch", return_value="main"),
+                patch("pyherdr.workspace_search._git_dirty", return_value=True),
+            ):
+                summary = refresh_workspace_search_cache(
+                    [SearchRoot(str(root), label="tmp")],
+                    max_depth=1,
+                    cache_path=cache_path,
+                )
+
+            records = load_workspace_search_cache(cache_path)
+            self.assertEqual(summary["indexed"], 1)
+            self.assertEqual(records[0]["label"], "alpha-app")
+            self.assertEqual(records[0]["branch"], "main")
+            self.assertTrue(records[0]["dirty"])
+
+            shutil.rmtree(repo)
+            prune_summary = prune_workspace_search_cache(cache_path)
+
+        self.assertEqual(prune_summary["removed"], 1)
+        self.assertEqual(load_workspace_search_cache(cache_path), [])
 
     @unittest.skipIf(os.name == "nt", "directory symlink creation is not reliable on all Windows setups")
     def test_skips_symlink_loops(self):

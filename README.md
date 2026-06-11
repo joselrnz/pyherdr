@@ -194,6 +194,7 @@ pyherdr status                         # server + session status
 pyherdr workspace create --label api --cwd ~/code
 pyherdr workspace recents --all --prune # inspect or clean stale picker roots
 pyherdr workspace search api --json      # inspect configured picker search roots
+pyherdr workspace index --refresh --json # refresh cached repo branch/dirty hints
 pyherdr tab create --label tests
 pyherdr pane create --title logs
 pyherdr pane start 1-1 python -i
@@ -228,11 +229,12 @@ browser-quality diagram, export SVG and open it in a browser.
 - Workflow audit log: `.pyherdr/workflow.jsonl`; obvious tokens/secrets are
   redacted before events are stored.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
-  and labels plus lightweight repo hints, not the server auth token. Use `pyherdr workspace recents`
-  to inspect or prune stale roots.
+  and labels plus lightweight repo hints, not the server auth token. Use
+  `pyherdr workspace recents` to inspect or prune stale roots.
 - Workspace search metadata: `.pyherdr/workspace_search_cache.json`; this stores
   discovered paths, branch/dirty hints, child-folder counts, and stale flags so
-  repeated picker searches do not have to ask git for every repo every time.
+  repeated picker searches do not have to ask git for every repo every time. Use
+  `pyherdr workspace index --refresh` or `--prune` to maintain it explicitly.
 - Workspace search can be bounded from config. When `workspace.search_roots` is
   empty, the picker still falls back to common folders like `~/github` and
   `~/code`.

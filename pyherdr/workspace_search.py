@@ -230,6 +230,100 @@ def default_workspace_search_cache_path() -> Path:
     return session_runtime_dir() / "workspace_search_cache.json"
 
 
+def load_workspace_search_cache(
+    cache_path: Path | None = None,
+    *,
+    include_stale: bool = True,
+) -> list[dict[str, Any]]:
+    path = cache_path or default_workspace_search_cache_path()
+    entries = _load_workspace_cache(path)
+    records = [dict(entry) for entry in entries.values() if include_stale or not bool(entry.get("stale"))]
+    return sorted(records, key=lambda item: str(item.get("path", "")).lower())
+
+
+def prune_workspace_search_cache(cache_path: Path | None = None) -> dict[str, Any]:
+    path = cache_path or default_workspace_search_cache_path()
+    entries = _load_workspace_cache(path)
+    kept: dict[str, dict[str, Any]] = {}
+    removed_paths: list[str] = []
+    for key, entry in entries.items():
+        raw_path = str(entry.get("path") or "")
+        keep = bool(raw_path) and Path(raw_path).exists() and not bool(entry.get("stale"))
+        if keep:
+            kept[key] = entry
+        else:
+            removed_paths.append(raw_path)
+    if entries:
+        _write_workspace_cache(path, kept)
+    return {
+        "path": str(path),
+        "kept": len(kept),
+        "removed": len(removed_paths),
+        "removed_paths": removed_paths,
+    }
+
+
+def refresh_workspace_search_cache(
+    roots: Iterable[SearchRoot],
+    *,
+    max_depth: int = 3,
+    max_entries: int = 500,
+    ignore_names: Iterable[str] = DEFAULT_IGNORE_NAMES,
+    include_hidden: bool = False,
+    cache_path: Path | None = None,
+) -> dict[str, Any]:
+    path = cache_path or default_workspace_search_cache_path()
+    entries = _load_workspace_cache(path)
+    ignored = {name.lower() for name in ignore_names}
+    now = time.time()
+    indexed = 0
+    scanned = 0
+    skipped_roots = 0
+    seen: set[str] = set()
+    entry_limit = max(0, max_entries)
+    for root in roots:
+        root_path = Path(root.path).expanduser().resolve()
+        if not root_path.is_dir():
+            skipped_roots += 1
+            continue
+        stack: list[tuple[Path, int]] = [(root_path, 0)]
+        while stack and indexed < entry_limit:
+            current, depth = stack.pop()
+            if _is_ignored(current.name, ignored, include_hidden) and current != root_path:
+                continue
+            path_key = _path_key(current)
+            if path_key in seen:
+                continue
+            seen.add(path_key)
+            scanned += 1
+            if _is_repo_root(current):
+                row = _candidate_row(
+                    current,
+                    root,
+                    current.name or str(current),
+                    metadata_cache=None,
+                    metadata_ttl_seconds=0,
+                    now=now,
+                )
+                if row:
+                    _update_workspace_cache(entries, row, root, now, stale=False)
+                    indexed += 1
+            if depth >= max(0, max_depth):
+                continue
+            children = _child_dirs(current, ignored=ignored, include_hidden=include_hidden)
+            stack.extend((child, depth + 1) for child in reversed(children))
+        if indexed >= entry_limit:
+            break
+    _write_workspace_cache(path, entries)
+    return {
+        "path": str(path),
+        "scanned": scanned,
+        "indexed": indexed,
+        "cached": len(entries),
+        "skipped_roots": skipped_roots,
+    }
+
+
 def _repo_metadata(
     path: Path,
     *,
