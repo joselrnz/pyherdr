@@ -87,6 +87,7 @@ def _dispatch_method(
         "pane.rename": _pane_rename,
         "pane.close": _pane_close,
         "pane.read": _pane_read,
+        "pane.wait_output": _pane_wait_output,
         "pane.capture": _pane_capture,
         "pane.run": _pane_run,
         "pane.start": _pane_start,
@@ -528,6 +529,30 @@ def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManag
         "type": "pane_read",
         "pane_id": pane.id,
         "output": output,
+    }
+
+
+def _pane_wait_output(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    """Long-poll until one watched live pane has new terminal output."""
+    if processes is None:
+        raise ValueError("pane.wait_output requires a server process manager")
+    raw_versions = params.get("versions", {})
+    if not isinstance(raw_versions, dict):
+        raise ValueError("pane.wait_output versions must be an object")
+    versions: dict[str, int] = {}
+    for pane_id, generation in raw_versions.items():
+        pane = state.require_pane(str(pane_id))
+        try:
+            versions[pane.id] = int(generation)
+        except (TypeError, ValueError):
+            versions[pane.id] = -1
+    timeout = float(params.get("timeout", 1.0))
+    result = processes.wait_for_output(versions, timeout=timeout)
+    return {
+        "type": "pane_output_wait",
+        "changed": result["changed"],
+        "versions": result["versions"],
+        "timed_out": result["timed_out"],
     }
 
 

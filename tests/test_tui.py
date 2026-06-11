@@ -83,6 +83,8 @@ class FakeClient:
         self.renamed_workspaces: list[tuple[str, str]] = []
         self.closed_workspaces: list[str] = []
         self.fanouts: list[dict] = []
+        self.reads: list[tuple[str, int, bool, bool]] = []
+        self.waits: list[dict[str, int]] = []
 
     def state(self) -> dict:
         return STATE
@@ -91,7 +93,12 @@ class FakeClient:
         return {"available": True, "stats": {}}
 
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
+        self.reads.append((pane_id, lines, styled, cursor))
         return f"SCREEN:{pane_id}"
+
+    def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict:
+        self.waits.append(dict(versions))
+        return {"type": "pane_output_wait", "changed": {}, "versions": versions, "timed_out": True}
 
     def send_text(self, pane_id: str, text: str) -> None:
         self.sent_text.append((pane_id, text))
@@ -1485,6 +1492,36 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("pagedown")
             await pilot.pause()
             self.assertIn(("1-1", "down"), client.scrolled)
+
+    async def test_tick_does_not_poll_pane_output(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            client.reads.clear()
+            app._tick()
+            await pilot.pause()
+            self.assertEqual(client.reads, [])
+
+    async def test_output_wait_updates_changed_pane_only(self):
+        class EventClient(FakeClient):
+            def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict:
+                self.waits.append(dict(versions))
+                return {
+                    "type": "pane_output_wait",
+                    "changed": {"1-2": 1},
+                    "versions": {"1-1": 0, "1-2": 1},
+                    "timed_out": False,
+                }
+
+        client = EventClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            client.reads.clear()
+            await app._terminal_refresh_loop_step()
+            self.assertIn(("1-2", 400, True, False), client.reads)
+            self.assertNotIn(("1-1", 400, True, True), client.reads)
 
     async def test_new_workspace_opens_dir_picker_and_creates(self):
         client = FakeClient()

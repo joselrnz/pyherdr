@@ -119,13 +119,14 @@ class RequestHandler(BaseRequestHandler):
             return
 
         method = str(request.get("method") or "")
-        _record_workflow_event(
-            "api.request",
-            message=method or "request",
-            source="client",
-            target=method,
-            details={"id": request_id, "params": request.get("params", {})},
-        )
+        if not quiet_request(method):
+            _record_workflow_event(
+                "api.request",
+                message=method or "request",
+                source="client",
+                target=method,
+                details={"id": request_id, "params": request.get("params", {})},
+            )
 
         if request.get("method") == "server.stop":
             response = {"id": request_id, "result": {"type": "server_stop"}}
@@ -142,10 +143,13 @@ class RequestHandler(BaseRequestHandler):
             threading.Thread(target=server.shutdown, daemon=True).start()
             return
 
-        with server.lock:
+        if skips_state_lock(method):
             response = dispatch(server.state, request, server.processes)
-            if "error" not in response and mutates_state(str(request.get("method") or "")):
-                save_state(server.state, server.state_path)
+        else:
+            with server.lock:
+                response = dispatch(server.state, request, server.processes)
+                if "error" not in response and mutates_state(str(request.get("method") or "")):
+                    save_state(server.state, server.state_path)
         response_details: dict[str, Any] = {"id": request_id, "error": response.get("error")}
         result = response.get("result")
         if method == "pane.fanout" and isinstance(result, dict):
@@ -154,14 +158,15 @@ class RequestHandler(BaseRequestHandler):
                 "target_count": result.get("target_count"),
                 "sent": result.get("sent"),
             }
-        _record_workflow_event(
-            "api.response",
-            message=method or "response",
-            source="server",
-            target=method,
-            status="error" if "error" in response else "ok",
-            details=response_details,
-        )
+        if not quiet_request(method):
+            _record_workflow_event(
+                "api.response",
+                message=method or "response",
+                source="server",
+                target=method,
+                status="error" if "error" in response else "ok",
+                details=response_details,
+            )
         self._write(response)
 
     def _write(self, payload: dict[str, Any]) -> None:
@@ -408,6 +413,7 @@ def mutates_state(method: str) -> bool:
         "tab.get",
         "pane.get",
         "pane.read",
+        "pane.wait_output",
         "pane.capture",
         "session.record",
         "worktree.list",
@@ -424,3 +430,13 @@ def mutates_state(method: str) -> bool:
         "schedule.list",
         "schedule.run",
     }
+
+
+def skips_state_lock(method: str) -> bool:
+    """Return whether a live-terminal request can run without the state lock."""
+    return method in {"pane.wait_output"}
+
+
+def quiet_request(method: str) -> bool:
+    """Suppress high-frequency internal long-poll traffic from workflow logs."""
+    return method in {"pane.wait_output"}

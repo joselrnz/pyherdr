@@ -2424,6 +2424,7 @@ class PyHerdrTui(App):
         self._workspace_id: str | None = None
         self._tab_id: str | None = None
         self._pane_id: str | None = None
+        self._terminal_versions: dict[str, int] = {}
         self._prefix = False
         self._zoom = False
         self._resize = False
@@ -2525,7 +2526,8 @@ class PyHerdrTui(App):
     async def on_mount(self) -> None:
         self.title = "PyHerdr"
         await self.reload()
-        self.set_interval(self._poll_interval, self._tick)
+        self.run_worker(self._terminal_refresh_loop(), group="terminal-refresh", exclusive=True)
+        self.set_interval(max(1.0, self._poll_interval), self._tick)
 
     # ----- input: prefix model -----
     def on_key(self, event: events.Key) -> None:
@@ -3120,6 +3122,9 @@ class PyHerdrTui(App):
         tab = self._focused_tab()
         return tab.get("panes", []) if tab else []
 
+    def _visible_pane_ids(self) -> list[str]:
+        return [view.pane_id for view in self.query(PaneView)]
+
     def _pane_by_id(self, pane_id: str | None) -> dict[str, Any] | None:
         if not pane_id:
             return None
@@ -3683,7 +3688,7 @@ class PyHerdrTui(App):
             self._client.pane_scroll(pane_id, direction)
         except Exception:
             return
-        self._update_pane_contents()
+        self._update_pane_contents({pane_id})
 
     def _copy_pane_output(self, pane_id: str | None) -> None:
         """Copy a pane's text (visible + scrollback) to the system clipboard."""
@@ -3698,16 +3703,45 @@ class PyHerdrTui(App):
 
     def _tick(self) -> None:
         self._spin += 1
-        self._update_pane_contents()
         # Animate the working spinner without a full sidebar rebuild.
         if self._has_working_agent():
             try:
                 self.query_one("#agents", Static).update(self._agents_text())
             except Exception:
                 pass
-        # ~1s: poll live state so background agent-state changes raise toasts.
-        if self._spin % 10 == 0:
-            self.run_worker(self._poll_state(), group="poll", exclusive=True)
+        self.run_worker(self._poll_state(), group="poll", exclusive=True)
+
+    async def _terminal_refresh_loop(self) -> None:
+        while True:
+            try:
+                await self._terminal_refresh_loop_step()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(1.0)
+
+    async def _terminal_refresh_loop_step(self) -> None:
+        pane_ids = self._visible_pane_ids()
+        if not pane_ids:
+            await asyncio.sleep(0.25)
+            return
+        versions = {pane_id: self._terminal_versions.get(pane_id, -1) for pane_id in pane_ids}
+        try:
+            result = await asyncio.to_thread(self._client.pane_wait_output, versions, 1.0)
+        except AttributeError:
+            await asyncio.sleep(max(0.05, self._poll_interval))
+            self._update_pane_contents()
+            return
+        latest = result.get("versions", {})
+        if isinstance(latest, dict):
+            self._terminal_versions.update({str(pane_id): int(version) for pane_id, version in latest.items()})
+        changed = result.get("changed", {})
+        if isinstance(changed, dict) and changed:
+            changed_ids = {str(pane_id) for pane_id in changed}
+            self._terminal_versions.update({str(pane_id): int(version) for pane_id, version in changed.items()})
+            self._update_pane_contents(changed_ids)
+        elif result.get("timed_out"):
+            await asyncio.sleep(max(0.25, min(self._poll_interval, 1.0)))
 
     async def _poll_state(self) -> None:
         try:
@@ -3739,8 +3773,10 @@ class PyHerdrTui(App):
                     elif status in ("idle", "done") and previous == "working":
                         self.notify(f"{name} finished", severity="information", timeout=5)
 
-    def _update_pane_contents(self) -> None:
+    def _update_pane_contents(self, pane_ids: set[str] | None = None) -> None:
         for view in self.query(PaneView):
+            if pane_ids is not None and view.pane_id not in pane_ids:
+                continue
             try:
                 output = self._client.pane_read(
                     view.pane_id, lines=400, styled=True, cursor=view.pane_id == self._pane_id

@@ -16,6 +16,9 @@ class _SessionManager:
     def running(self, pane_id: str) -> bool:
         return True
 
+    def wait_for_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict:
+        return {"changed": {"1-1": 2}, "versions": {"1-1": 2}, "timed_out": False}
+
 
 class _NoSessionManager:
     """Stands in for a TerminalManager with no session for the pane."""
@@ -76,6 +79,20 @@ class PaneReadTests(unittest.TestCase):
         dispatch(state, {"id": "r", "method": "pane.read", "params": {"pane_id": pane.id}}, _SessionManager(screen))
 
         self.assertEqual(pane.status, AgentStatus.WORKING)
+
+    def test_pane_wait_output_returns_changed_versions(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+
+        response = dispatch(
+            state,
+            {"id": "w", "method": "pane.wait_output", "params": {"versions": {pane.id: 1}, "timeout": 0.01}},
+            _SessionManager("LIVE SCREEN"),
+        )
+
+        self.assertEqual(response["result"]["type"], "pane_output_wait")
+        self.assertEqual(response["result"]["changed"], {pane.id: 2})
+        self.assertFalse(response["result"]["timed_out"])
 
     def test_pty_io_failure_becomes_structured_error(self):
         state = AppState.bootstrap(cwd="C:/work")

@@ -26,6 +26,10 @@ class PaneClient(Protocol):
         """Return the rendered screen for a pane (ANSI-styled when ``styled``)."""
         ...
 
+    def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
+        """Wait until any watched pane has a newer output generation."""
+        ...
+
     def send_text(self, pane_id: str, text: str) -> None:
         """Type text into a pane."""
         ...
@@ -128,6 +132,10 @@ class ServerClient:
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         response = self._request("pane.read", pane_id=pane_id, lines=lines, styled=styled, cursor=cursor)
         return response.get("result", {}).get("output", "")
+
+    def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
+        response = self._request("pane.wait_output", versions=versions, timeout=timeout)
+        return response.get("result", {"changed": {}, "versions": {}, "timed_out": True})
 
     def send_text(self, pane_id: str, text: str) -> None:
         self._request("pane.send_text", pane_id=pane_id, text=text)

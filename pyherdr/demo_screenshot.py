@@ -248,6 +248,9 @@ class DemoScreenshotClient:
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         return DEMO_OUTPUTS.get(pane_id, "")
 
+    def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
+        return {"type": "pane_output_wait", "changed": {}, "versions": versions, "timed_out": True}
+
     def send_text(self, pane_id: str, text: str) -> None:
         return None
 
