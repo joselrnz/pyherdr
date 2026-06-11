@@ -69,27 +69,60 @@ class TerminalScreen:
         self._cols = cols
         self._screen = pyte.HistoryScreen(cols, rows, history=history, ratio=0.5)
         self._stream = pyte.Stream(self._screen)
+        self._offset_from_bottom = 0
 
     def feed(self, text: str) -> None:
         """Feed decoded terminal output into the screen."""
+        start = self._viewport_start() if self._offset_from_bottom else None
         self._stream.feed(text)
+        if start is not None:
+            self._set_viewport_start(start)
+        else:
+            self._offset_from_bottom = 0
 
     def resize(self, rows: int, cols: int) -> None:
         """Resize the screen grid."""
+        start = self._viewport_start() if self._offset_from_bottom else None
         self._rows = rows
         self._cols = cols
         self._screen.resize(rows, cols)
+        if start is not None:
+            self._set_viewport_start(start)
+        else:
+            self._offset_from_bottom = 0
 
     def display(self) -> list[str]:
         """Return the current visible screen as right-stripped lines."""
-        return [line.rstrip() for line in self._screen.display]
+        if self._offset_from_bottom == 0:
+            return self._screen_display()
+        return self._viewport_lines()
 
     def scroll(self, direction: str) -> None:
-        """Scroll the visible window through scrollback (``up`` shows older lines)."""
-        if direction == "up":
-            self._screen.prev_page()
-        elif direction == "down":
-            self._screen.next_page()
+        """Move the deterministic scrollback viewport."""
+        max_offset = self._max_offset()
+        page = max(1, self._rows)
+        if direction in {"up", "page_up"}:
+            self._offset_from_bottom = min(max_offset, self._offset_from_bottom + page)
+        elif direction in {"down", "page_down"}:
+            self._offset_from_bottom = max(0, self._offset_from_bottom - page)
+        elif direction == "top":
+            self._offset_from_bottom = max_offset
+        elif direction == "bottom":
+            self._offset_from_bottom = 0
+        self._clamp_offset()
+
+    def viewport(self) -> dict[str, int | bool]:
+        """Return deterministic scrollback viewport state for UI/copy-mode math."""
+        max_offset = self._max_offset()
+        self._clamp_offset()
+        return {
+            "offset_from_bottom": self._offset_from_bottom,
+            "max_offset": max_offset,
+            "rows": self._rows,
+            "total_lines": len(self._document_lines()),
+            "at_top": self._offset_from_bottom == max_offset,
+            "at_bottom": self._offset_from_bottom == 0,
+        }
 
     def render_styled(self, cursor: bool = False) -> str:
         """Return the visible screen as ANSI-styled lines.
@@ -98,6 +131,8 @@ class TerminalScreen:
         length coalesced). When ``cursor`` is set, the cursor cell is drawn in
         reverse video so the client can show a block cursor.
         """
+        if self._offset_from_bottom:
+            return "\n".join(f"\x1b[0m{line.ljust(self._cols)}\x1b[0m" for line in self._viewport_lines())
         screen = self._screen
         cur_x, cur_y = screen.cursor.x, screen.cursor.y
         lines: list[str] = []
@@ -122,8 +157,7 @@ class TerminalScreen:
         Trailing blank lines are dropped. When ``lines`` is given, only the most
         recent ``lines`` rows are returned.
         """
-        history = [self._render_history_line(row) for row in self._screen.history.top]
-        combined = history + self.display()
+        combined = self._document_lines()
         while combined and not combined[-1].strip():
             combined.pop()
         if lines is not None and lines >= 0:
@@ -136,3 +170,32 @@ class TerminalScreen:
             return ""
         width = max(self._cols, max(row) + 1)
         return "".join(row[x].data for x in range(width)).rstrip()
+
+    def _screen_display(self) -> list[str]:
+        return [line.rstrip() for line in self._screen.display]
+
+    def _document_lines(self) -> list[str]:
+        history = [self._render_history_line(row) for row in self._screen.history.top]
+        return history + self._screen_display()
+
+    def _max_offset(self) -> int:
+        return max(0, len(self._document_lines()) - self._rows)
+
+    def _clamp_offset(self) -> None:
+        self._offset_from_bottom = max(0, min(self._offset_from_bottom, self._max_offset()))
+
+    def _viewport_start(self) -> int:
+        self._clamp_offset()
+        return max(0, len(self._document_lines()) - self._rows - self._offset_from_bottom)
+
+    def _set_viewport_start(self, start: int) -> None:
+        self._offset_from_bottom = max(0, len(self._document_lines()) - self._rows - max(0, start))
+        self._clamp_offset()
+
+    def _viewport_lines(self) -> list[str]:
+        document = self._document_lines()
+        start = self._viewport_start()
+        lines = document[start : start + self._rows]
+        while len(lines) < self._rows:
+            lines.append("")
+        return lines

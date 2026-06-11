@@ -39,6 +39,26 @@ class _NoSessionProcesses:
         raise KeyError(pane_id)
 
 
+class _ScrollProcesses:
+    """A manager that records scroll directions and exposes viewport state."""
+
+    def __init__(self) -> None:
+        self.scrolled: list[tuple[str, str]] = []
+
+    def scroll(self, pane_id: str, direction: str) -> None:
+        self.scrolled.append((pane_id, direction))
+
+    def viewport(self, pane_id: str) -> dict[str, int | bool]:
+        return {
+            "offset_from_bottom": 3,
+            "max_offset": 9,
+            "rows": 3,
+            "total_lines": 12,
+            "at_top": False,
+            "at_bottom": False,
+        }
+
+
 class ApiTests(unittest.TestCase):
     def test_ping(self):
         state = AppState.bootstrap(cwd="C:/work")
@@ -91,6 +111,21 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(recents[0]["path"], str(workspace.resolve()))
         self.assertEqual(recents[0]["label"], "api")
+
+    def test_pane_scroll_accepts_viewport_directions(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        processes = _ScrollProcesses()
+
+        response = dispatch(
+            state,
+            {"id": "scroll", "method": "pane.scroll", "params": {"pane_id": pane.id, "direction": "top"}},
+            processes,
+        )
+
+        self.assertEqual(processes.scrolled, [(pane.id, "top")])
+        self.assertEqual(response["result"]["direction"], "top")
+        self.assertEqual(response["result"]["viewport"]["offset_from_bottom"], 3)
 
     def test_workspace_recents_can_include_and_prune_stale_roots(self):
         import json

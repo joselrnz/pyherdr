@@ -497,12 +497,24 @@ def _pane_scroll(state: AppState, params: dict[str, Any], processes: TerminalMan
     if processes is None:
         raise ValueError("pane.scroll requires a server process manager")
     pane = state.require_pane(_required(params, "pane_id"))
-    direction = "down" if str(params.get("direction") or "up").lower() == "down" else "up"
+    direction = _scroll_direction(params.get("direction"))
+    viewport: dict[str, int | bool] | None = None
     try:
         processes.scroll(pane.id, direction)
+        viewport = processes.viewport(pane.id)
     except KeyError:
         pass
-    return {"type": "pane_scroll", "pane_id": pane.id, "direction": direction}
+    return {"type": "pane_scroll", "pane_id": pane.id, "direction": direction, "viewport": viewport}
+
+
+def _scroll_direction(value: Any) -> str:
+    direction = str(value or "up").lower().replace("-", "_")
+    aliases = {
+        "pageup": "page_up",
+        "pagedown": "page_down",
+    }
+    direction = aliases.get(direction, direction)
+    return direction if direction in {"up", "down", "page_up", "page_down", "top", "bottom"} else "up"
 
 
 def _pane_read(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:

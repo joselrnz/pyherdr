@@ -118,6 +118,11 @@ class TerminalSession:
             generation = self._mark_changed_locked()
         self._notify_manager(generation)
 
+    def viewport(self) -> dict[str, int | bool]:
+        """Return this session's deterministic scrollback viewport state."""
+        with self._lock:
+            return self._screen.viewport()
+
     @property
     def generation(self) -> int:
         """Return the current output generation for event-driven refresh."""
@@ -289,6 +294,10 @@ class TerminalManager:
     def scroll(self, pane_id: str, direction: str) -> None:
         """Scroll a pane's screen through scrollback."""
         self._require(pane_id).scroll(direction)
+
+    def viewport(self, pane_id: str) -> dict[str, int | bool]:
+        """Return a pane's scrollback viewport state."""
+        return self._require(pane_id).viewport()
 
     def stop(self, pane_id: str) -> bool:
         """Stop a pane's terminal; return ``False`` if there was none."""

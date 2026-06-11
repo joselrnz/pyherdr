@@ -41,6 +41,76 @@ class TerminalScreenTests(unittest.TestCase):
 
         self.assertEqual(len(screen.snapshot(lines=2)), 2)
 
+    def test_scrollback_viewport_pages_to_top_and_bottom(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(8):
+            screen.feed(f"line{index}\r\n")
+
+        screen.scroll("top")
+        self.assertEqual(screen.display(), ["line0", "line1", "line2"])
+        self.assertTrue(screen.viewport()["at_top"])
+        self.assertFalse(screen.viewport()["at_bottom"])
+
+        screen.scroll("bottom")
+        self.assertIn("line7", screen.display())
+        self.assertTrue(screen.viewport()["at_bottom"])
+
+    def test_scrollback_viewport_page_movement_is_clamped(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(8):
+            screen.feed(f"line{index}\r\n")
+
+        screen.scroll("top")
+        screen.scroll("up")
+        self.assertEqual(screen.display(), ["line0", "line1", "line2"])
+
+        screen.scroll("bottom")
+        screen.scroll("down")
+        self.assertTrue(screen.viewport()["at_bottom"])
+        self.assertIn("line7", screen.display())
+
+    def test_scrollback_viewport_preserves_position_when_unpinned(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(8):
+            screen.feed(f"line{index}\r\n")
+        screen.scroll("top")
+        before = screen.display()
+
+        screen.feed("line8\r\nline9\r\n")
+
+        self.assertEqual(screen.display(), before)
+        self.assertFalse(screen.viewport()["at_bottom"])
+
+    def test_scrollback_viewport_follows_output_at_bottom(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(3):
+            screen.feed(f"line{index}\r\n")
+        screen.scroll("bottom")
+
+        screen.feed("line3\r\nline4\r\n")
+
+        self.assertTrue(screen.viewport()["at_bottom"])
+        self.assertIn("line4", screen.display())
+
+    def test_snapshot_ignores_scrollback_viewport(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(8):
+            screen.feed(f"line{index}\r\n")
+        screen.scroll("top")
+
+        self.assertEqual(screen.snapshot(lines=2), ["line6", "line7"])
+
+    def test_styled_render_uses_scrollback_viewport(self):
+        screen = TerminalScreen(rows=3, cols=20, history=50)
+        for index in range(8):
+            screen.feed(f"line{index}\r\n")
+        screen.scroll("top")
+
+        rendered = screen.render_styled()
+
+        self.assertIn("line0", rendered)
+        self.assertNotIn("line7", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
