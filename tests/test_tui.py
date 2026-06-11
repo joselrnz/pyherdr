@@ -397,6 +397,17 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.push_screen(DirPickerScreen(base, selected.append, quick_paths=[("recent project", recent)]))
             await pilot.pause()
+
+            app.copy_to_clipboard("alp")
+            app.screen.on_key(self._key_event("ctrl+shift+v"))
+            await pilot.pause()
+            jump = app.screen.query_one("#dir-jump")
+            self.assertEqual(jump.value, "alp")
+            text = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("alpha/", text)
+            self.assertNotIn("beta/", text)
+            self.assertNotIn("recent project", text)
+
             await app.screen.on_input_changed(self._changed_event("alp"))
             await pilot.pause()
             text = self._screen_text(app.screen, "#dir-list")
@@ -494,6 +505,12 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("  beta/", listing)
 
             app.screen.on_key(self._key_event("y"))
+            await pilot.pause()
+            self.assertEqual(copied[-1], os.path.abspath(alpha))
+            self.assertIn("copied path:", self._widget_text(app.screen, "#dir-foot"))
+
+            copied.clear()
+            app.screen.on_key(self._key_event("ctrl+shift+c"))
             await pilot.pause()
             self.assertEqual(copied[-1], os.path.abspath(alpha))
             self.assertIn("copied path:", self._widget_text(app.screen, "#dir-foot"))
@@ -605,6 +622,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Ctrl+W", help_text)
             self.assertIn("ls text", help_text)
             self.assertIn("copy highlighted path", help_text)
+            self.assertIn("Ctrl+Shift+C", help_text)
+            self.assertIn("Ctrl+Shift+V", help_text)
             self.assertIn("copy path", help_text)
             self.assertIn("search mode", help_text)
 
@@ -1105,6 +1124,13 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             app.screen.on_key(self._key_event("y"))
+            await pilot.pause(0.2)
+
+            self.assertEqual(copied, [os.path.abspath(alpha)])
+            self.assertIn("copied path", self._widget_text(app.screen, "#dir-foot"))
+
+            copied.clear()
+            app.screen.on_key(self._key_event("ctrl+shift+c"))
             await pilot.pause(0.2)
 
             self.assertEqual(copied, [os.path.abspath(alpha)])

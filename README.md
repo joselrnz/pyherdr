@@ -164,6 +164,10 @@ open, or press Esc to cancel. The picker also has a `Help` button plus `?` /
 `Backspace` goes up one folder, `Ctrl+H` jumps home, `Ctrl+W` jumps back to the
 current workspace root, and `Ctrl+R` jumps to the current git repo root when one
 is available. Press `y` in browse mode to copy the highlighted folder path.
+When the terminal passes the chords through, `Ctrl+Shift+C` copies the
+highlighted browse/search path and `Ctrl+Shift+V` pastes clipboard text into the
+picker input. `y` remains the copy fallback for terminals that reserve
+`Ctrl+Shift+C`.
 Pressing Enter on a real path jumps there. The input also accepts safe explorer
 commands: `ls` refreshes, `ls text` filters, `cd path` changes folder, `pwd`
 prints the current path in the footer, `copy path` copies the resolved folder,

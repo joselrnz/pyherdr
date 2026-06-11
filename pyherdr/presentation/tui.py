@@ -399,6 +399,8 @@ def _dir_picker_help_text() -> Text:
     text.append("  Ctrl+F       search mode\n")
     text.append("  Ctrl+L       path mode\n")
     text.append("  y            copy highlighted path\n")
+    text.append("  Ctrl+Shift+C copy highlighted path\n")
+    text.append("  Ctrl+Shift+V paste into input\n")
     text.append("\ncommands\n", style="bold")
     text.append("  ls           refresh current folder\n")
     text.append("  ls text      filter current folder\n")
@@ -1967,6 +1969,17 @@ class DirPickerScreen(ModalScreen[None]):
             event.stop()
             event.prevent_default()
             self._jump_to_repo_root()
+        elif event.key == "ctrl+shift+c":
+            event.stop()
+            event.prevent_default()
+            if self._search_mode:
+                self._copy_active_search_path()
+            else:
+                self._copy_active_browse_path()
+        elif event.key == "ctrl+shift+v":
+            event.stop()
+            event.prevent_default()
+            self._paste_clipboard_into_input()
         elif not self._search_mode and event.key in {"y", "ctrl+y"}:
             event.stop()
             event.prevent_default()
@@ -2090,6 +2103,15 @@ class DirPickerScreen(ModalScreen[None]):
             target = row.arg or self._cwd
         self._copy_search_path(target)
 
+    def _paste_clipboard_into_input(self) -> None:
+        jump = self.query_one("#dir-jump", Input)
+        jump.action_paste()
+        if not self._search_mode and self._is_command_draft(jump.value):
+            self._query = ""
+            self.run_worker(self._populate(""), exclusive=True)
+            return
+        self.run_worker(self._populate(jump.value), exclusive=True)
+
     def _move_active_search_row(self, delta: int) -> None:
         if not self._search_rows:
             self._active_row = 0
@@ -2153,6 +2175,10 @@ class DirPickerScreen(ModalScreen[None]):
             self._command_status = f"path: {display}"
         else:
             self._command_status = f"copied path: {display}"
+        if self._search_mode:
+            self._update_search_footer()
+        else:
+            self._update_browse_footer()
         self.run_worker(self._populate(), exclusive=True)
 
     def _hide_active_stale_search_row(self) -> None:
