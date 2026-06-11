@@ -1,9 +1,11 @@
+import json
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from pyherdr.api import dispatch
-from pyherdr.models import AppState
+from pyherdr.models import AgentStatus, AppState
 from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents, remove_workspace_recent
 
 
@@ -241,6 +243,54 @@ class ApiTests(unittest.TestCase):
         result = self._capture(state, None)
 
         self.assertIn("offline capture", result["output"])
+
+    def test_session_record_writes_output_and_status_timeline(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        pane.title = "codex loop"
+        pane.status = AgentStatus.BLOCKED
+        pane.custom_status = "needs approval"
+
+        with TemporaryDirectory() as temp:
+            output = Path(temp) / "recording.json"
+            response = dispatch(
+                state,
+                {
+                    "id": "record",
+                    "method": "session.record",
+                    "params": {"output": str(output), "lines": 1},
+                },
+                _CaptureProcesses("line one\ntoken=secret-value"),
+            )
+
+            result = response["result"]
+            self.assertEqual(result["type"], "session_recording")
+            self.assertEqual(result["path"], str(output))
+            self.assertEqual(result["pane_count"], 1)
+            self.assertTrue(output.exists())
+
+            recording = json.loads(output.read_text(encoding="utf-8"))
+            recorded_pane = recording["workspaces"][0]["tabs"][0]["panes"][0]
+            self.assertEqual(recorded_pane["title"], "codex loop")
+            self.assertEqual(recorded_pane["agent_status"], "blocked")
+            self.assertEqual(recorded_pane["custom_status"], "needs approval")
+            self.assertEqual(recorded_pane["output"]["lines"], ["token=[redacted]"])
+            self.assertEqual(recorded_pane["output"]["line_count"], 1)
+            self.assertTrue(recorded_pane["output"]["truncated"])
+            self.assertTrue(
+                any(
+                    event["kind"] == "agent_status"
+                    and event["pane_id"] == pane.id
+                    and event["status"] == "blocked"
+                    for event in recording["timeline"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    event["kind"] == "pane_output" and event["pane_id"] == pane.id and event["line_count"] == 1
+                    for event in recording["timeline"]
+                )
+            )
 
     def test_pane_fanout_dry_run_resolves_mixed_targets_without_sending(self):
         state = AppState.bootstrap(cwd="C:/work")

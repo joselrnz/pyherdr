@@ -361,6 +361,46 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue().strip(), "raw line one\nraw line two")
         self.assertNotIn("pane_capture", stdout.getvalue())
 
+    def test_session_record_parses_output_lines_and_styled_flags(self):
+        args = build_parser().parse_args(["session", "record", "--output", "rec.json", "--lines", "50", "--styled"])
+
+        self.assertEqual(args.command, "session")
+        self.assertEqual(args.session_command, "record")
+        self.assertEqual(args.output, "rec.json")
+        self.assertEqual(args.lines, 50)
+        self.assertTrue(args.styled)
+
+    def test_session_record_output_prints_summary_not_full_recording(self):
+        from pyherdr.cli import run_session
+
+        args = build_parser().parse_args(["session", "record", "--output", "rec.json", "--lines", "20"])
+        captured: dict = {}
+
+        def fake_request(request):
+            captured.update(request)
+            return {
+                "id": "cli",
+                "result": {
+                    "type": "session_recording",
+                    "path": "rec.json",
+                    "pane_count": 2,
+                    "timeline_count": 4,
+                    "recording": {"large": "omitted in CLI summary"},
+                },
+            }
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+            exit_code = run_session(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["method"], "session.record")
+        self.assertEqual(captured["params"], {"output": "rec.json", "lines": 20, "styled": False})
+        printed = stdout.getvalue()
+        self.assertIn('"path": "rec.json"', printed)
+        self.assertIn('"pane_count": 2', printed)
+        self.assertNotIn("omitted in CLI summary", printed)
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")

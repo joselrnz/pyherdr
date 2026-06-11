@@ -204,6 +204,7 @@ pyherdr pane start 1-1 python -i
 pyherdr pane send-text 1-1 "print('hi')\n"
 pyherdr pane capture 1-1 --text         # full pane scrollback as raw text for scripts/AI
 pyherdr pane capture 1-1 --lines 40     # last 40 lines as JSON (line counts + lines[])
+pyherdr session record --output run.json # record panes, output, and status timeline
 pyherdr pane get 1-1                    # pane metadata incl. command + agent status
 pyherdr pane fanout --target workspace:main -- pytest -q     # dry-run preview
 pyherdr pane fanout --all --execute --no-enter -- git status  # send to every pane
@@ -233,6 +234,9 @@ browser-quality diagram, export SVG and open it in a browser.
 - Named sessions: `PYHERDR_SESSION=<name>` isolates state + server per name.
 - Workflow audit log: `.pyherdr/workflow.jsonl`; obvious tokens/secrets are
   redacted before events are stored.
+- Session recordings: `pyherdr session record --output recording.json` writes a
+  redacted JSON snapshot with workspace/tab/pane metadata, captured pane output,
+  and status timeline events for future replay/debug workflows.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
   and labels plus lightweight repo hints, not the server auth token. Use
   `pyherdr workspace recents` to inspect or prune stale roots.

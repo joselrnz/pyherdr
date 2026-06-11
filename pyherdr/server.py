@@ -408,6 +408,7 @@ def mutates_state(method: str) -> bool:
         "pane.get",
         "pane.read",
         "pane.capture",
+        "session.record",
         "worktree.list",
         "pane.send_text",
         "pane.send_key",

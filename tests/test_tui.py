@@ -344,6 +344,15 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         renderable = screen.query_one(selector).render()
         return renderable.plain if hasattr(renderable, "plain") else str(renderable)
 
+    async def _wait_for_dir_list_text(self, pilot, app: PyHerdrTui, expected: str) -> str:
+        text = ""
+        for _ in range(20):
+            await pilot.pause(0.1)
+            text = self._screen_text(app.screen, "#dir-list")
+            if expected in text:
+                break
+        return text
+
     async def test_dir_picker_navigates_and_selects(self):
         import os
         import tempfile
@@ -806,8 +815,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await app.screen.on_input_changed(self._changed_event("alpha"))
             self.assertIn("searching roots for alpha", self._screen_text(app.screen, "#dir-list"))
 
-            await pilot.pause(0.2)
-            text = self._screen_text(app.screen, "#dir-list")
+            text = await self._wait_for_dir_list_text(pilot, app, "alpha-app")
             self.assertIn("alpha-app", text)
             self.assertNotIn("searching roots", text)
 
@@ -988,8 +996,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.screen.on_key(self._key_event("ctrl+f"))
             await app.screen.on_input_changed(self._changed_event("alpha"))
-            await pilot.pause()
-            self.assertIn("alpha-app", self._screen_text(app.screen, "#dir-list"))
+            text = await self._wait_for_dir_list_text(pilot, app, "alpha-app")
+            self.assertIn("alpha-app", text)
 
             app.screen.on_key(self._key_event("p"))
             path_text = ""

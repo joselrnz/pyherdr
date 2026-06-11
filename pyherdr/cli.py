@@ -131,6 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
     session_stop.add_argument("name")
     session_delete = session_sub.add_parser("delete")
     session_delete.add_argument("name")
+    session_record = session_sub.add_parser("record", help="write a session recording snapshot")
+    session_record.add_argument(
+        "--output",
+        "-o",
+        help="JSON file to write; stdout prints the full recording if omitted",
+    )
+    session_record.add_argument("--lines", type=int, default=None, help="limit each pane capture to the last N lines")
+    session_record.add_argument("--styled", action="store_true", help="record ANSI-styled visible screen output")
 
     notification = sub.add_parser("notification", help="show a notification")
     notification_sub = notification.add_subparsers(dest="notification_command", required=True)
@@ -572,6 +580,29 @@ def run_session(args) -> int:
         shutil.rmtree(session_runtime_dir(args.name), ignore_errors=True)
         print(json.dumps({"deleted": args.name}, indent=2))
         return 0
+    if args.session_command == "record":
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "session.record",
+                "params": {"output": args.output, "lines": args.lines, "styled": args.styled},
+            }
+        )
+        if args.output and "result" in response:
+            result = response["result"]
+            print(
+                json.dumps(
+                    {
+                        "type": result.get("type"),
+                        "path": result.get("path"),
+                        "pane_count": result.get("pane_count"),
+                        "timeline_count": result.get("timeline_count"),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        return print_response(response)
     return 2
 
 

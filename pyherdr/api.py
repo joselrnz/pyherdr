@@ -17,6 +17,7 @@ from .detector import detect_agent_status
 from .layout import Direction, PaneNode, TileLayout
 from .models import AgentStatus, AppState, Pane, Tab
 from .notification import Notification, deliver
+from .recording import build_session_recording, count_recorded_panes, write_session_recording
 from .runtime import TerminalManager
 from .runtime.procstats import AVAILABLE as STATS_AVAILABLE
 from .session import current_session
@@ -102,6 +103,7 @@ def _dispatch_method(
         "agent.rename": _agent_rename,
         "agent.focus": _agent_focus,
         "agent.start": _agent_start,
+        "session.record": _session_record,
         "schedule.add": _schedule_add,
         "schedule.list": _schedule_list,
         "schedule.remove": _schedule_remove,
@@ -807,6 +809,31 @@ def _agent_start(state: AppState, params: dict[str, Any], processes: TerminalMan
         "type": "agent_started",
         "started": started,
         "agent": _pane_record(pane, record_workspace_id, record_tab_id),
+    }
+
+
+def _session_record(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    """Record a point-in-time session artifact for replay/debug workflows."""
+    line_limit = _capture_limit(params.get("lines"))
+    styled = bool(params.get("styled"))
+
+    def capture(pane: Pane) -> dict[str, Any]:
+        capture_params = {"pane_id": pane.id, "lines": line_limit, "styled": styled}
+        return _pane_capture(state, capture_params, processes)
+
+    recording = build_session_recording(state, capture)
+    output = str(params.get("output") or params.get("path") or "")
+    written: Path | None = None
+    if output:
+        written = write_session_recording(recording, Path(output))
+    return {
+        "type": "session_recording",
+        "version": recording["version"],
+        "session": recording["session"],
+        "path": str(written) if written else "",
+        "pane_count": count_recorded_panes(recording),
+        "timeline_count": len(recording.get("timeline", [])),
+        "recording": recording,
     }
 
 
