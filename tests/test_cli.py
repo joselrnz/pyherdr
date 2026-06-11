@@ -44,7 +44,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("choose workspace folder", plain)
         self.assertIn("Open Folder", plain)
         self.assertIn("Enter", plain)
-        self.assertIn("ls/cd/pwd/open", plain)
+        self.assertIn("^H home", plain)
+        self.assertIn("^W ws", plain)
+        self.assertIn("^R repo", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)
 

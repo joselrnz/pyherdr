@@ -1351,7 +1351,7 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-stale { color: $ph-subtext0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
-    #dir-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    #dir-foot { color: $ph-subtext0; height: auto; min-height: 2; padding: 1 0 0 0; }
     """
 
     def __init__(
@@ -1612,7 +1612,9 @@ class DirPickerScreen(ModalScreen[None]):
         )
 
     def _update_browse_footer(self) -> None:
-        self._update_footer("↑/↓ move · Enter · Alt+O open · Ctrl+F search · ls/cd/pwd/open · Esc")
+        self._update_footer(
+            "↑/↓ · Enter · Alt+O · Bksp · ^H home · ^W ws · ^R repo · ^F search"
+        )
 
     def _update_footer(self, help_text: str) -> None:
         text = help_text
@@ -1847,6 +1849,22 @@ class DirPickerScreen(ModalScreen[None]):
             event.prevent_default()
             self._on_select(os.path.abspath(self._cwd))
             self.dismiss()
+        elif not self._search_mode and event.key == "backspace" and not self.query_one("#dir-jump", Input).value:
+            event.stop()
+            event.prevent_default()
+            self._jump_to_parent_folder()
+        elif event.key == "ctrl+h":
+            event.stop()
+            event.prevent_default()
+            self._jump_to_home_folder()
+        elif event.key == "ctrl+w":
+            event.stop()
+            event.prevent_default()
+            self._jump_to_current_workspace()
+        elif event.key == "ctrl+r":
+            event.stop()
+            event.prevent_default()
+            self._jump_to_repo_root()
         elif not self._search_mode and event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
@@ -1901,6 +1919,39 @@ class DirPickerScreen(ModalScreen[None]):
         self._active_browse_row = 0
         self.query_one("#dir-jump", Input).value = ""
         self.run_worker(self._populate(), exclusive=True)
+
+    def _jump_to_parent_folder(self) -> None:
+        parent = os.path.dirname(self._cwd)
+        if parent and parent != self._cwd and os.path.isdir(parent):
+            self._set_cwd(parent, status=f"up: {self._display_path(parent)}")
+
+    def _jump_to_home_folder(self) -> None:
+        home = os.path.abspath(os.path.expanduser("~"))
+        if os.path.isdir(home):
+            self._set_cwd(home, status=f"home: {self._display_path(home)}")
+        else:
+            self._clear_input_filter(status="home: not available")
+
+    def _jump_to_current_workspace(self) -> None:
+        workspace = self._quick_path_named("current workspace")
+        if workspace and os.path.isdir(workspace):
+            self._set_cwd(workspace, status=f"workspace: {self._display_path(workspace)}")
+        else:
+            self._clear_input_filter(status="workspace: not available")
+
+    def _jump_to_repo_root(self) -> None:
+        repo_root = _git_root(self._cwd)
+        if repo_root and os.path.isdir(repo_root):
+            self._set_cwd(repo_root, status=f"repo: {self._display_path(repo_root)}")
+        else:
+            self._clear_input_filter(status="repo: not available")
+
+    def _quick_path_named(self, label: str) -> str:
+        target_label = label.strip().lower()
+        for candidate_label, path in self._quick_paths:
+            if candidate_label.strip().lower() == target_label:
+                return path
+        return ""
 
     def _move_active_browse_row(self, delta: int) -> None:
         if not self._browse_rows:

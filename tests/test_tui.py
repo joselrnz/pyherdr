@@ -526,6 +526,55 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selected, [])
 
+    async def test_dir_picker_browse_shortcuts_jump_to_parent_home_current_workspace_and_repo(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        root = tempfile.mkdtemp()
+        workspace = os.path.join(root, "workspace")
+        child = os.path.join(workspace, "child")
+        home = os.path.join(root, "home")
+        repo = os.path.join(root, "repo")
+        os.makedirs(child)
+        os.makedirs(home)
+        os.makedirs(repo)
+        selected: list[str] = []
+
+        def fake_expanduser(value: str) -> str:
+            return home if value == "~" else value
+
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        with (
+            patch("pyherdr.presentation.tui.os.path.expanduser", side_effect=fake_expanduser),
+            patch("pyherdr.presentation.tui._git_root", return_value=os.path.abspath(repo)),
+        ):
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                app.push_screen(
+                    DirPickerScreen(child, selected.append, quick_paths=[("current workspace", workspace)])
+                )
+                await pilot.pause()
+                self.assertIn("^W ws", self._widget_text(app.screen, "#dir-foot"))
+
+                app.screen.on_key(self._key_event("backspace"))
+                await pilot.pause()
+                self.assertEqual(app.screen._cwd, os.path.abspath(workspace))
+
+                app.screen.on_key(self._key_event("ctrl+h"))
+                await pilot.pause()
+                self.assertEqual(app.screen._cwd, os.path.abspath(home))
+
+                app.screen.on_key(self._key_event("ctrl+w"))
+                await pilot.pause()
+                self.assertEqual(app.screen._cwd, os.path.abspath(workspace))
+
+                app.screen.on_key(self._key_event("ctrl+r"))
+                await pilot.pause()
+                self.assertEqual(app.screen._cwd, os.path.abspath(repo))
+
+        self.assertEqual(selected, [])
+
     async def test_dir_picker_input_accepts_safe_navigation_commands(self):
         import os
         import tempfile
