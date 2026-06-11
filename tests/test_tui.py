@@ -992,10 +992,18 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("alpha-app", self._screen_text(app.screen, "#dir-list"))
 
             app.screen.on_key(self._key_event("p"))
-            await pilot.pause()
+            path_text = ""
+            footer = ""
+            expected_parent = os.path.abspath(outer).replace("\\", "/")
+            for _ in range(10):
+                await pilot.pause(0.1)
+                path_text = self._widget_text(app.screen, "#dir-path")
+                footer = self._widget_text(app.screen, "#dir-foot")
+                if expected_parent in path_text and "parent:" in footer:
+                    break
 
-            self.assertIn(os.path.abspath(outer).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
-            self.assertIn("parent:", self._widget_text(app.screen, "#dir-foot"))
+            self.assertIn(expected_parent, path_text)
+            self.assertIn("parent:", footer)
 
         self.assertEqual(selected, [])
 
@@ -1074,10 +1082,17 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
 
                     app.screen.on_key(self._key_event("delete"))
-                    await pilot.pause()
+                    footer = ""
+                    listing = ""
+                    for _ in range(10):
+                        await pilot.pause(0.1)
+                        listing = self._screen_text(app.screen, "#dir-list")
+                        footer = self._widget_text(app.screen, "#dir-foot")
+                        if "ghostc-plugin" not in listing and "removed stale recent root" in footer:
+                            break
 
-                    self.assertNotIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
-                    self.assertIn("removed stale recent root", self._widget_text(app.screen, "#dir-foot"))
+                    self.assertNotIn("ghostc-plugin", listing)
+                    self.assertIn("removed stale recent root", footer)
                     recents = load_workspace_recents(include_stale=True)
 
         self.assertEqual(recents, [])

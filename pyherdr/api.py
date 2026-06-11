@@ -84,6 +84,7 @@ def _dispatch_method(
         "pane.rename": _pane_rename,
         "pane.close": _pane_close,
         "pane.read": _pane_read,
+        "pane.capture": _pane_capture,
         "pane.run": _pane_run,
         "pane.start": _pane_start,
         "pane.send_text": _pane_send_text,
@@ -530,6 +531,78 @@ def _update_status_from_screen(pane: Pane, output: str) -> None:
     detection = detect(agent, output)
     if not detection.skip_state_update:
         pane.status = detection.state
+
+
+def _pane_capture(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:
+    """Capture a pane's output for scripts and AI loops (tmux ``capture-pane`` style).
+
+    Unlike ``pane.read`` (which returns the last ~80 visible rows for the live UI),
+    capture defaults to the *entire* scrollback buffer and reports line counts plus a
+    structured ``lines`` array, so automation can consume pane output without
+    screenshots. ``lines`` tails the last N rows; ``styled`` returns the ANSI-styled
+    visible screen (scrollback history carries no styling).
+    """
+    pane = state.require_pane(_required(params, "pane_id"))
+    styled = bool(params.get("styled"))
+    cursor = bool(params.get("cursor"))
+    limit = _capture_limit(params.get("lines"))
+    captured = _capture_lines(pane, processes, styled=styled, cursor=cursor)
+    total = len(captured)
+    if limit is None:
+        selected = captured
+    elif limit == 0:
+        selected = []
+    else:
+        selected = captured[-limit:]
+    return {
+        "type": "pane_capture",
+        "pane_id": pane.id,
+        "styled": styled,
+        "total_lines": total,
+        "line_count": len(selected),
+        "truncated": len(selected) < total,
+        "lines": selected,
+        "output": "\n".join(selected),
+    }
+
+
+def _capture_lines(
+    pane: Pane,
+    processes: TerminalManager | None,
+    *,
+    styled: bool,
+    cursor: bool,
+) -> list[str]:
+    """Return a pane's captured rows, preferring the live terminal over stored output.
+
+    The plain screen always drives agent-status detection; ``styled`` additionally
+    swaps the returned rows for the ANSI-rendered visible screen.
+    """
+    if processes is None:
+        return list(pane.output)
+    try:
+        plain = processes.read(pane.id, None)
+    except KeyError:
+        return list(pane.output)
+    _update_status_from_screen(pane, plain)
+    if styled:
+        try:
+            rendered = processes.render_styled(pane.id, cursor=cursor)
+        except KeyError:
+            rendered = plain
+        return rendered.split("\n") if rendered else []
+    return plain.split("\n") if plain else []
+
+
+def _capture_limit(value: Any) -> int | None:
+    """Coerce a ``lines`` param into a tail size; ``None``/blank/negative means all."""
+    if value is None or value == "":
+        return None
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return None
+    return limit if limit >= 0 else None
 
 
 def _pane_run(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:

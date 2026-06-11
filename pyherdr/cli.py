@@ -309,6 +309,11 @@ def build_parser() -> argparse.ArgumentParser:
     pane_read = pane_sub.add_parser("read")
     pane_read.add_argument("pane_id")
     pane_read.add_argument("--lines", type=int, default=80)
+    pane_capture = pane_sub.add_parser("capture", help="capture full pane output (scrollback) for scripts")
+    pane_capture.add_argument("pane_id")
+    pane_capture.add_argument("--lines", type=int, default=None, help="limit to the last N lines (default: all)")
+    pane_capture.add_argument("--styled", action="store_true", help="include ANSI styling from the visible screen")
+    pane_capture.add_argument("--text", action="store_true", help="print only the captured text instead of JSON")
     pane_close = pane_sub.add_parser("close")
     pane_close.add_argument("pane_id")
     pane_run = pane_sub.add_parser("run")
@@ -934,6 +939,18 @@ def run_pane(args) -> int:
                 "params": {"pane_id": args.pane_id, "lines": args.lines},
             },
         )
+        return print_response(response)
+    if args.pane_command == "capture":
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "pane.capture",
+                "params": {"pane_id": args.pane_id, "lines": args.lines, "styled": args.styled},
+            },
+        )
+        if args.text and "result" in response:
+            print(response["result"].get("output", ""))
+            return 0
         return print_response(response)
     if args.pane_command == "close":
         response = ensure_request(

@@ -202,6 +202,8 @@ pyherdr tab create --label tests
 pyherdr pane create --title logs
 pyherdr pane start 1-1 python -i
 pyherdr pane send-text 1-1 "print('hi')\n"
+pyherdr pane capture 1-1 --text         # full pane scrollback as raw text for scripts/AI
+pyherdr pane capture 1-1 --lines 40     # last 40 lines as JSON (line counts + lines[])
 pyherdr pane get 1-1                    # pane metadata incl. command + agent status
 pyherdr pane fanout --target workspace:main -- pytest -q     # dry-run preview
 pyherdr pane fanout --all --execute --no-enter -- git status  # send to every pane

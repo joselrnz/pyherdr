@@ -16,6 +16,27 @@ class _FakeProcesses:
         return len(pane_ids)
 
 
+class _CaptureProcesses:
+    """A manager with a live session whose full buffer/styled screen are fixed."""
+
+    def __init__(self, buffer: str, styled: str = "") -> None:
+        self._buffer = buffer
+        self._styled = styled or buffer
+
+    def read(self, pane_id: str, lines=None) -> str:
+        return self._buffer
+
+    def render_styled(self, pane_id: str, cursor: bool = False) -> str:
+        return self._styled
+
+
+class _NoSessionProcesses:
+    """A manager with no live session for the pane (read raises KeyError)."""
+
+    def read(self, pane_id: str, lines=None) -> str:
+        raise KeyError(pane_id)
+
+
 class ApiTests(unittest.TestCase):
     def test_ping(self):
         state = AppState.bootstrap(cwd="C:/work")
@@ -153,6 +174,73 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response["result"]["pane"]["agent_status"], "blocked")
         self.assertEqual(pane.custom_status, "approval")
+
+    def _capture(self, state, processes, params=None):
+        pane = state.focused_workspace.focused_tab.focused_pane
+        request = {"id": "c", "method": "pane.capture", "params": {"pane_id": pane.id, **(params or {})}}
+        return dispatch(state, request, processes)["result"]
+
+    def test_pane_capture_returns_full_buffer_with_counts(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        buffer = "line one\nline two\nline three"
+
+        result = self._capture(state, _CaptureProcesses(buffer))
+
+        self.assertEqual(result["type"], "pane_capture")
+        self.assertEqual(result["output"], buffer)
+        self.assertEqual(result["lines"], ["line one", "line two", "line three"])
+        self.assertEqual(result["total_lines"], 3)
+        self.assertEqual(result["line_count"], 3)
+        self.assertFalse(result["truncated"])
+
+    def test_pane_capture_tails_lines_and_marks_truncated(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        buffer = "one\ntwo\nthree\nfour"
+
+        result = self._capture(state, _CaptureProcesses(buffer), {"lines": 2})
+
+        self.assertEqual(result["lines"], ["three", "four"])
+        self.assertEqual(result["total_lines"], 4)
+        self.assertEqual(result["line_count"], 2)
+        self.assertTrue(result["truncated"])
+
+    def test_pane_capture_zero_lines_returns_empty_tail(self):
+        state = AppState.bootstrap(cwd="C:/work")
+
+        result = self._capture(state, _CaptureProcesses("one\ntwo"), {"lines": 0})
+
+        self.assertEqual(result["lines"], [])
+        self.assertEqual(result["output"], "")
+        self.assertEqual(result["total_lines"], 2)
+        self.assertEqual(result["line_count"], 0)
+        self.assertTrue(result["truncated"])
+
+    def test_pane_capture_styled_uses_rendered_visible_screen(self):
+        state = AppState.bootstrap(cwd="C:/work")
+
+        result = self._capture(state, _CaptureProcesses("plain", styled="\x1b[0m styled"), {"styled": True})
+
+        self.assertTrue(result["styled"])
+        self.assertEqual(result["output"], "\x1b[0m styled")
+
+    def test_pane_capture_falls_back_to_stored_output_without_session(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        pane.append_output("stored one")
+        pane.append_output("stored two")
+
+        result = self._capture(state, _NoSessionProcesses())
+
+        self.assertEqual(result["lines"], ["stored one", "stored two"])
+        self.assertEqual(result["total_lines"], 2)
+
+    def test_pane_capture_uses_stored_output_when_no_manager(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        state.focused_workspace.focused_tab.focused_pane.append_output("offline capture")
+
+        result = self._capture(state, None)
+
+        self.assertIn("offline capture", result["output"])
 
     def test_pane_fanout_dry_run_resolves_mixed_targets_without_sending(self):
         state = AppState.bootstrap(cwd="C:/work")

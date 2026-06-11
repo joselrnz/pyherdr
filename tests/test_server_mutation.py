@@ -11,7 +11,7 @@ class MutatesStateTests(unittest.TestCase):
     def test_live_terminal_io_does_not_persist(self):
         # These drive the PTY but do not change persisted session state, so they
         # must not trigger a session.json write (important for per-key forwarding).
-        for method in ("pane.send_text", "pane.send_key", "pane.resize", "pane.read"):
+        for method in ("pane.send_text", "pane.send_key", "pane.resize", "pane.read", "pane.capture"):
             self.assertFalse(mutates_state(method), method)
 
     def test_read_only_queries_do_not_persist(self):

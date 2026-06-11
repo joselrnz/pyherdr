@@ -314,6 +314,53 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.no_enter)
         self.assertEqual(args.command_parts, ["pytest", "-q"])
 
+    def test_pane_capture_parses_lines_styled_and_text_flags(self):
+        args = build_parser().parse_args(["pane", "capture", "1-1", "--lines", "50", "--styled", "--text"])
+
+        self.assertEqual(args.command, "pane")
+        self.assertEqual(args.pane_command, "capture")
+        self.assertEqual(args.pane_id, "1-1")
+        self.assertEqual(args.lines, 50)
+        self.assertTrue(args.styled)
+        self.assertTrue(args.text)
+
+    def test_pane_capture_defaults_to_whole_buffer_as_json(self):
+        from pyherdr.cli import run_pane
+
+        args = build_parser().parse_args(["pane", "capture", "1-1"])
+        self.assertIsNone(args.lines)
+
+        captured: dict = {}
+
+        def fake_request(request):
+            captured.update(request)
+            return {"id": "cli", "result": {"type": "pane_capture", "output": "a\nb", "total_lines": 2}}
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+            exit_code = run_pane(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["method"], "pane.capture")
+        self.assertEqual(captured["params"], {"pane_id": "1-1", "lines": None, "styled": False})
+        self.assertIn('"total_lines": 2', stdout.getvalue())
+
+    def test_pane_capture_text_flag_prints_raw_output(self):
+        from pyherdr.cli import run_pane
+
+        args = build_parser().parse_args(["pane", "capture", "1-1", "--text"])
+
+        def fake_request(request):
+            return {"id": "cli", "result": {"type": "pane_capture", "output": "raw line one\nraw line two"}}
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+            exit_code = run_pane(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout.getvalue().strip(), "raw line one\nraw line two")
+        self.assertNotIn("pane_capture", stdout.getvalue())
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")
