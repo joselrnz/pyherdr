@@ -2128,7 +2128,32 @@ class DirPickerScreen(ModalScreen[None]):
         listing = self.query_one("#dir-list", VerticalScroll)
         if row_index < 0 or row_index >= len(listing.children):
             return
-        self.call_after_refresh(listing.children[row_index].scroll_visible, animate=False)
+        active_row = listing.children[row_index]
+
+        def scroll_after_layout() -> None:
+            if active_row not in listing.children:
+                return
+            region = active_row.virtual_region
+            if not region:
+                return
+            viewport_height = max(1, listing.size.height)
+            viewport_top = int(listing.scroll_y)
+            viewport_bottom = viewport_top + viewport_height
+            row_top = region.y
+            row_bottom = row_top + max(1, region.height)
+            if row_top < viewport_top:
+                target_y = row_top
+            elif row_bottom > viewport_bottom:
+                target_y = row_bottom - viewport_height
+            else:
+                return
+            listing.scroll_to(
+                y=max(0, min(target_y, int(listing.max_scroll_y))),
+                animate=False,
+                immediate=True,
+            )
+
+        self.call_after_refresh(scroll_after_layout)
 
     def _open_active_browse_row(self) -> None:
         row = self._active_browse_row_record()
