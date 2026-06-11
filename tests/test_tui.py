@@ -1684,8 +1684,23 @@ search_roots = ["{configured.as_posix()}"]
             await pilot.click("#newterm")  # open the dropdown
             await pilot.pause()
             self.assertIsInstance(app.screen, ShellPickerScreen)
-            label, command = app._shells[0]
-            await pilot.click(f"#shellpick-{label}")
+            _label, command = app._shells[0]
+            await pilot.click("#shellpick-0")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(client.tabs, 1)
+            self.assertIn(("new-pane", command), client.started)
+
+    async def test_shell_dropdown_allows_shell_labels_with_spaces(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        command = "cmd.exe"
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(ShellPickerScreen([("Command Prompt", command)]))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ShellPickerScreen)
+            await pilot.click("#shellpick-0")
             await pilot.pause()
             await pilot.pause()
             self.assertEqual(client.tabs, 1)

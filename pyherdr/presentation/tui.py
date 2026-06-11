@@ -1158,8 +1158,7 @@ class ContextMenuScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     ContextMenuScreen { align: center middle; background: $ph-base 50%; }
     #ctx-box {
-        width: auto;
-        min-width: 22;
+        width: 32;
         height: auto;
         background: $ph-mantle;
         border: round $ph-accent;
@@ -1204,8 +1203,7 @@ class ShellPickerScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     ShellPickerScreen { align: center middle; background: $ph-base 60%; }
     #shell-box {
-        width: auto;
-        min-width: 26;
+        width: 32;
         height: auto;
         background: $ph-mantle;
         border: round $ph-accent;
@@ -1223,13 +1221,12 @@ class ShellPickerScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         rows = [
-            Clickable(f"  {label}", "new_shell", command, id=f"shellpick-{label}", classes="shell-row")
-            for label, command in self._shells
+            Clickable(f"  {label}", "new_shell", command, id=f"shellpick-{index}", classes="shell-row")
+            for index, (label, command) in enumerate(self._shells)
         ]
-        box = Vertical(*rows, id="shell-box")
+        box = Vertical(*rows, Static("click a shell · esc close", id="shell-foot"), id="shell-box")
         box.border_title = "new terminal"
         yield box
-        yield Static("click a shell · esc close", id="shell-foot")
 
     def on_activated(self, message: Activated) -> None:
         message.stop()
@@ -1251,8 +1248,7 @@ class DirSearchMenuScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     DirSearchMenuScreen { align: center middle; background: $ph-base 50%; }
     #dir-search-menu-box {
-        width: auto;
-        min-width: 24;
+        width: 30;
         height: auto;
         background: $ph-mantle;
         border: round $ph-accent;
