@@ -3332,7 +3332,9 @@ class PyHerdrTui(App):
 
     def _pane_view(self, pane_id: str, panes: dict[str, dict]) -> PaneView:
         pane = panes.get(pane_id, {})
-        return PaneView(pane_id, f"{pane.get('title', 'pane')} · {pane.get('status', '?')}")
+        host = str(pane.get("remote_host") or "")
+        title = f"{host}:{pane.get('title', 'pane')}" if host else str(pane.get("title", "pane"))
+        return PaneView(pane_id, f"{title} · {pane.get('status', '?')}")
 
     def _layout_widget(self, layout_data: dict, panes: dict[str, dict]) -> Widget | None:
         if not layout_data:

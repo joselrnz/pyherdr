@@ -244,6 +244,19 @@ class ApiTests(unittest.TestCase):
 
         self.assertIn("offline capture", result["output"])
 
+    def test_events_snapshot_returns_live_update_events(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        pane.status = AgentStatus.WORKING
+
+        response = dispatch(state, {"id": "events", "method": "events.snapshot", "params": {}})
+
+        result = response["result"]
+        self.assertEqual(result["type"], "events_snapshot")
+        self.assertTrue(
+            any(event["kind"] == "agent_status" and event["pane_id"] == pane.id for event in result["events"])
+        )
+
     def test_session_record_writes_output_and_status_timeline(self):
         state = AppState.bootstrap(cwd="C:/work")
         pane = state.focused_workspace.focused_tab.focused_pane

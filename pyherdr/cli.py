@@ -12,8 +12,12 @@ from typing import Any
 
 from . import __version__
 from .config import load_config
+from .diagnostics import create_debug_bundle
 from .gui import main as dashboard_main
 from .models import AgentStatus
+from .plugins import load_plugin_manifest
+from .remote import probe_remote
+from .replay import load_recording, summarize_recording
 from .server import (
     ServerInfo,
     ensure_request,
@@ -67,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
         return print_status()
     if args.command == "session":
         return run_session(args)
+    if args.command == "debug":
+        return run_debug(args)
+    if args.command == "remote":
+        return run_remote(args)
+    if args.command == "plugin":
+        return run_plugin(args)
     if args.command == "notification":
         return run_notification(args)
     if args.command == "workflow":
@@ -139,6 +149,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session_record.add_argument("--lines", type=int, default=None, help="limit each pane capture to the last N lines")
     session_record.add_argument("--styled", action="store_true", help="record ANSI-styled visible screen output")
+    session_replay = session_sub.add_parser("replay", help="inspect a session recording")
+    session_replay.add_argument("recording")
+    session_replay.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
+
+    debug = sub.add_parser("debug", help="diagnostic export commands")
+    debug_sub = debug.add_subparsers(dest="debug_command", required=True)
+    debug_bundle = debug_sub.add_parser("bundle", help="write a redacted debug bundle")
+    debug_bundle.add_argument("--output", "-o", default="pyherdr-debug.zip")
+
+    remote = sub.add_parser("remote", help="remote host commands")
+    remote_sub = remote.add_subparsers(dest="remote_command", required=True)
+    remote_probe = remote_sub.add_parser("probe", help="test remote prerequisites over SSH")
+    remote_probe.add_argument("host")
+    remote_probe.add_argument("--timeout", type=int, default=5)
+
+    plugin = sub.add_parser("plugin", help="plugin manifest commands")
+    plugin_sub = plugin.add_subparsers(dest="plugin_command", required=True)
+    plugin_validate = plugin_sub.add_parser("validate", help="validate a plugin manifest")
+    plugin_validate.add_argument("manifest")
 
     notification = sub.add_parser("notification", help="show a notification")
     notification_sub = notification.add_subparsers(dest="notification_command", required=True)
@@ -603,6 +632,35 @@ def run_session(args) -> int:
             )
             return 0
         return print_response(response)
+    if args.session_command == "replay":
+        recording = load_recording(Path(args.recording))
+        summary = summarize_recording(recording)
+        print(json.dumps(summary, indent=2))
+        return 0
+    return 2
+
+
+def run_debug(args) -> int:
+    if args.debug_command == "bundle":
+        path = create_debug_bundle(Path(args.output))
+        print(json.dumps({"type": "debug_bundle", "path": str(path)}, indent=2))
+        return 0
+    return 2
+
+
+def run_remote(args) -> int:
+    if args.remote_command == "probe":
+        result = probe_remote(args.host, timeout=args.timeout)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
+    return 2
+
+
+def run_plugin(args) -> int:
+    if args.plugin_command == "validate":
+        manifest = load_plugin_manifest(Path(args.manifest))
+        print(json.dumps({"type": "plugin_manifest", "manifest": manifest.model_dump()}, indent=2))
+        return 0
     return 2
 
 

@@ -15,6 +15,7 @@ from .cron import parse_cron
 from .detect import detect, identify_agent_in_command, parse_agent_label
 from .detector import detect_agent_status
 from .layout import Direction, PaneNode, TileLayout
+from .live_updates import build_state_events
 from .models import AgentStatus, AppState, Pane, Tab
 from .notification import Notification, deliver
 from .recording import build_session_recording, count_recorded_panes, write_session_recording
@@ -57,6 +58,7 @@ def _dispatch_method(
         "ping": _ping,
         "state.get": _state_get,
         "stats.get": _stats_get,
+        "events.snapshot": _events_snapshot,
         "notification.show": _notification_show,
         "workspace.create": _workspace_create,
         "workspace.get": _workspace_get,
@@ -124,6 +126,12 @@ def _stats_get(_state: AppState, _params: dict[str, Any], processes: TerminalMan
     """Return the latest per-pane CPU/RAM snapshot gathered by the server sampler."""
     snapshot = processes.stats_snapshot() if processes else {}
     return {"type": "stats", "available": STATS_AVAILABLE, "stats": snapshot}
+
+
+def _events_snapshot(state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
+    """Return dashboard-friendly state/status events."""
+    events = build_state_events(state)
+    return {"type": "events_snapshot", "events": events, "event_count": len(events)}
 
 
 def _ensure_layout(tab: Tab) -> TileLayout:
@@ -1094,12 +1102,18 @@ def _tab_record(tab) -> dict[str, Any]:
 
 
 def _pane_record(pane, workspace_id: str, tab_id: str) -> dict[str, Any]:
+    location = "remote" if pane.remote_host else "local"
+    display_cwd = f"{pane.remote_host}:{pane.remote_cwd or pane.cwd}" if pane.remote_host else pane.cwd
     return {
         "pane_id": pane.id,
         "workspace_id": workspace_id,
         "tab_id": tab_id,
         "title": pane.title,
         "cwd": pane.cwd,
+        "location": location,
+        "remote_host": pane.remote_host,
+        "remote_cwd": pane.remote_cwd,
+        "display_cwd": display_cwd,
         "command": pane.command,
         "agent": pane.agent,
         "agent_status": pane.status.value,

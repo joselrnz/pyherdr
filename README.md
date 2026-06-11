@@ -205,6 +205,10 @@ pyherdr pane send-text 1-1 "print('hi')\n"
 pyherdr pane capture 1-1 --text         # full pane scrollback as raw text for scripts/AI
 pyherdr pane capture 1-1 --lines 40     # last 40 lines as JSON (line counts + lines[])
 pyherdr session record --output run.json # record panes, output, and status timeline
+pyherdr session replay run.json          # inspect a recording summary
+pyherdr debug bundle --output debug.zip  # export redacted diagnostics
+pyherdr remote probe buildbox            # check SSH prerequisites for future remote panes
+pyherdr plugin validate plugin.json      # validate a plugin manifest
 pyherdr pane get 1-1                    # pane metadata incl. command + agent status
 pyherdr pane fanout --target workspace:main -- pytest -q     # dry-run preview
 pyherdr pane fanout --all --execute --no-enter -- git status  # send to every pane
@@ -237,6 +241,12 @@ browser-quality diagram, export SVG and open it in a browser.
 - Session recordings: `pyherdr session record --output recording.json` writes a
   redacted JSON snapshot with workspace/tab/pane metadata, captured pane output,
   and status timeline events for future replay/debug workflows.
+- Replay/debug: `pyherdr session replay recording.json` summarizes a recording;
+  `pyherdr debug bundle --output debug.zip` writes redacted state/workflow/server
+  diagnostics.
+- Remote/plugin foundations: `pyherdr remote probe HOST` checks SSH prerequisites
+  before remote panes are enabled; `pyherdr plugin validate plugin.json` validates
+  detector, launcher, theme, and exporter manifests.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
   and labels plus lightweight repo hints, not the server auth token. Use
   `pyherdr workspace recents` to inspect or prune stale roots.

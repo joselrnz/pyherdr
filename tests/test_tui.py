@@ -745,12 +745,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.screen.on_key(self._key_event("ctrl+f"))
             await app.screen.on_input_changed(self._changed_event("alpha"))
-            text = ""
-            for _ in range(10):
-                await pilot.pause(0.1)
-                text = self._screen_text(app.screen, "#dir-list")
-                if "searching roots" not in text:
-                    break
+            text = await self._wait_for_dir_list_text(pilot, app, "alpha-app")
             self.assertIn("alpha-app", text)
             self.assertNotIn("beta-tool", text)
 

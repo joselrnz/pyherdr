@@ -399,6 +399,7 @@ def mutates_state(method: str) -> bool:
         "ping",
         "state.get",
         "stats.get",
+        "events.snapshot",
         "notification.show",
         "workspace.list",
         "tab.list",

@@ -29,6 +29,8 @@ class Pane(DomainModel):
     cwd: str
     command: str = ""
     agent: str = ""
+    remote_host: str = ""
+    remote_cwd: str = ""
     output: list[str] = Field(default_factory=list)
     status: AgentStatus = AgentStatus.IDLE
     custom_status: str = ""

@@ -401,6 +401,47 @@ class CliTests(unittest.TestCase):
         self.assertIn('"pane_count": 2', printed)
         self.assertNotIn("omitted in CLI summary", printed)
 
+    def test_session_replay_prints_recording_summary(self):
+        from pyherdr.cli import run_session
+
+        args = build_parser().parse_args(["session", "replay", "recording.json"])
+
+        with patch(
+            "pyherdr.cli.load_recording",
+            return_value={"type": "session_recording", "workspaces": [], "timeline": []},
+        ), patch(
+            "pyherdr.cli.summarize_recording",
+            return_value={"type": "recording_summary", "pane_count": 0},
+        ):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = run_session(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"recording_summary"', stdout.getvalue())
+
+    def test_debug_bundle_parses_output(self):
+        args = build_parser().parse_args(["debug", "bundle", "--output", "bundle.zip"])
+
+        self.assertEqual(args.command, "debug")
+        self.assertEqual(args.debug_command, "bundle")
+        self.assertEqual(args.output, "bundle.zip")
+
+    def test_remote_probe_parses_host(self):
+        args = build_parser().parse_args(["remote", "probe", "buildbox", "--timeout", "3"])
+
+        self.assertEqual(args.command, "remote")
+        self.assertEqual(args.remote_command, "probe")
+        self.assertEqual(args.host, "buildbox")
+        self.assertEqual(args.timeout, 3)
+
+    def test_plugin_validate_parses_manifest_path(self):
+        args = build_parser().parse_args(["plugin", "validate", "plugin.json"])
+
+        self.assertEqual(args.command, "plugin")
+        self.assertEqual(args.plugin_command, "validate")
+        self.assertEqual(args.manifest, "plugin.json")
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")
