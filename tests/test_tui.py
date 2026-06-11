@@ -491,6 +491,25 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selected, [os.path.abspath(base)])
 
+    async def test_dir_picker_pins_footer_when_folder_list_is_long(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        for index in range(24):
+            os.makedirs(os.path.join(base, f"folder-{index:02d}"))
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, lambda path: None))
+            await pilot.pause()
+
+            app.screen.query_one("#dir-list-panel")
+            self.assertIn("Help", self._widget_text(app.screen, "#dir-help"))
+            self.assertIn("Enter open", self._widget_text(app.screen, "#dir-foot"))
+            self.assertIn("─", self._widget_text(app.screen, "#dir-separator"))
+            self.assertIn("> .. parent folder", self._screen_text(app.screen, "#dir-list"))
+
     async def test_dir_picker_browse_mode_arrows_move_and_enter_opens_active_row(self):
         import os
         import tempfile

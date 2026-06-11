@@ -1377,7 +1377,7 @@ class DirPickerScreen(ModalScreen[None]):
     DirPickerScreen { align: center middle; background: $ph-base 70%; }
     #dir-box {
         width: 72;
-        height: auto;
+        height: 30;
         max-height: 90%;
         background: $ph-mantle;
         border: round $ph-accent;
@@ -1413,7 +1413,14 @@ class DirPickerScreen(ModalScreen[None]):
         margin: 1 1 0 1;
     }
     .dir-current-open:hover { background: $ph-green; color: $ph-base; }
-    #dir-list { height: auto; max-height: 15; }
+    #dir-list-panel {
+        height: 1fr;
+        min-height: 7;
+        border: round $ph-surface0;
+        background: $ph-base;
+        padding: 0 0;
+    }
+    #dir-list { height: 1fr; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
     .dir-quick { width: 1fr; color: $ph-subtext0; padding: 0 1; }
@@ -1426,6 +1433,7 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
     #dir-input-hint { color: $ph-overlay0; height: 1; padding: 0 1 0 1; }
+    #dir-separator { height: 1; color: $ph-surface0; }
     #dir-footer { height: 1; padding: 0 0 0 0; }
     #dir-foot { width: 1fr; color: $ph-subtext0; height: auto; min-height: 1; }
     .dir-help-button {
@@ -1491,7 +1499,9 @@ class DirPickerScreen(ModalScreen[None]):
                 with Horizontal(id="dir-current-card"):
                     yield Static("", id="dir-path")
                     yield Clickable("Open Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
-            yield VerticalScroll(id="dir-list")
+            with Vertical(id="dir-list-panel"):
+                yield VerticalScroll(id="dir-list")
+                yield Static("─" * 66, id="dir-separator")
             with Horizontal(id="dir-footer"):
                 yield Static("↑/↓ move · Enter open · Esc cancel", id="dir-foot")
                 yield Clickable("? Help", "dir_help", classes="dir-help-button", id="dir-help")
