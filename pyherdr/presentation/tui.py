@@ -1568,6 +1568,7 @@ class DirPickerScreen(ModalScreen[None]):
             )
         await listing.mount(*rows)
         self._update_browse_footer()
+        self._scroll_active_dir_row_visible(self._active_browse_row)
 
     def _browse_row_text(self, row: DirBrowseRow, index: int) -> Text:
         cursor = ">" if index == self._active_browse_row else " "
@@ -1640,6 +1641,7 @@ class DirPickerScreen(ModalScreen[None]):
             )
         await listing.mount(*row_widgets)
         self._update_search_footer()
+        self._scroll_active_dir_row_visible(self._active_row)
 
     def _start_search_worker(self, needle: str, cache_key: SearchCacheKey) -> None:
         if self._pending_search_key == cache_key:
@@ -2121,6 +2123,12 @@ class DirPickerScreen(ModalScreen[None]):
             self._active_browse_row = 0
             return
         self._active_browse_row = max(0, min(len(self._browse_rows) - 1, self._active_browse_row + delta))
+
+    def _scroll_active_dir_row_visible(self, row_index: int) -> None:
+        listing = self.query_one("#dir-list", VerticalScroll)
+        if row_index < 0 or row_index >= len(listing.children):
+            return
+        self.call_after_refresh(listing.children[row_index].scroll_visible, animate=False)
 
     def _open_active_browse_row(self) -> None:
         row = self._active_browse_row_record()

@@ -510,6 +510,32 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("─", self._widget_text(app.screen, "#dir-separator"))
             self.assertIn("> .. parent folder", self._screen_text(app.screen, "#dir-list"))
 
+    async def test_dir_picker_arrows_scroll_active_row_into_view(self):
+        import os
+        import tempfile
+
+        base = tempfile.mkdtemp()
+        for index in range(30):
+            os.makedirs(os.path.join(base, f"folder-{index:02d}"))
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(DirPickerScreen(base, lambda path: None))
+            await pilot.pause()
+            listing = app.screen.query_one("#dir-list")
+            self.assertEqual(listing.scroll_y, 0)
+
+            for _ in range(14):
+                app.screen.on_key(self._key_event("down"))
+                await pilot.pause()
+
+            for _ in range(10):
+                await pilot.pause(0.1)
+                if listing.scroll_y > 0:
+                    break
+            self.assertGreater(listing.scroll_y, 0)
+            self.assertIn("> folder-13/", self._screen_text(app.screen, "#dir-list"))
+
     async def test_dir_picker_browse_mode_arrows_move_and_enter_opens_active_row(self):
         import os
         import tempfile
