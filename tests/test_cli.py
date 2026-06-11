@@ -33,6 +33,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workspace-search")
 
+    def test_demo_screenshot_accepts_workspace_search_variant_views(self):
+        for view in ("workspace-search-selected", "workspace-search-stale", "workspace-search-long-path"):
+            with self.subTest(view=view):
+                args = build_parser().parse_args(["demo-screenshot", "--view", view])
+
+                self.assertEqual(args.command, "demo-screenshot")
+                self.assertEqual(args.view, view)
+
     def test_demo_screenshot_renders_workspace_picker_view(self):
         import html
         import tempfile
@@ -65,6 +73,60 @@ class CliTests(unittest.TestCase):
         self.assertIn("pyherdr-demo", plain)
         self.assertEqual(plain.count("[ ] repo"), 1)
         self.assertEqual(plain.count("[ ] dir"), 1)
+
+    def test_demo_screenshot_renders_workspace_search_selected_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(
+                Path(tmp) / "search-selected.svg",
+                width=100,
+                height=30,
+                view="workspace-search-selected",
+            )
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("search mode", plain)
+        self.assertIn("[x] repo", plain)
+        self.assertIn("pyherdr-demo", plain)
+
+    def test_demo_screenshot_renders_workspace_search_stale_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(
+                Path(tmp) / "search-stale.svg",
+                width=100,
+                height=30,
+                view="workspace-search-stale",
+            )
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("search mode", plain)
+        self.assertIn("[ ] stale", plain)
+        self.assertIn("pyherdr-missing", plain)
+
+    def test_demo_screenshot_renders_workspace_search_long_path_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(
+                Path(tmp) / "search-long-path.svg",
+                width=100,
+                height=30,
+                view="workspace-search-long-path",
+            )
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("search mode", plain)
+        self.assertIn("pyherdr-operations-console", plain)
+        self.assertIn("regional-command-center", plain)
 
     def test_workflow_graph_accepts_svg_output(self):
         args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])

@@ -122,6 +122,9 @@ python -m pyherdr demo-screenshot --view workflow --output pyherdr-workflow.svg
 python -m pyherdr demo-screenshot --view fanout --output pyherdr-fanout.svg
 python -m pyherdr demo-screenshot --view workspace-picker --output pyherdr-picker.svg
 python -m pyherdr demo-screenshot --view workspace-search --output pyherdr-search.svg
+python -m pyherdr demo-screenshot --view workspace-search-selected --output pyherdr-search-selected.svg
+python -m pyherdr demo-screenshot --view workspace-search-stale --output pyherdr-search-stale.svg
+python -m pyherdr demo-screenshot --view workspace-search-long-path --output pyherdr-search-long.svg
 ```
 
 Open the SVG in a browser to inspect it. To test the live product with real PTY

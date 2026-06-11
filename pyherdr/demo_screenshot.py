@@ -196,6 +196,16 @@ DEMO_WORKFLOW_EVENTS = [
 
 
 DEMO_PICKER_ROOT = "C:/Users/josel/github/pyherdr"
+DEMO_SCREENSHOT_VIEWS = (
+    "main",
+    "workflow",
+    "fanout",
+    "workspace-picker",
+    "workspace-search",
+    "workspace-search-selected",
+    "workspace-search-stale",
+    "workspace-search-long-path",
+)
 
 
 class DemoDirPickerScreen(DirPickerScreen):
@@ -336,6 +346,63 @@ class DemoScreenshotClient:
         }
 
 
+async def _open_workspace_search_demo(app: PyHerdrTui, pilot: Any, view: str) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        search_roots = _prepare_workspace_search_fixture(root, view)
+        app.push_screen(
+            DirPickerScreen(
+                str(root),
+                lambda selected: None,
+                search_roots=search_roots,
+                search_debounce=0,
+                search_max_depth=6,
+            )
+        )
+        await pilot.pause(0.5)
+        if isinstance(app.screen, DirPickerScreen):
+            key_event = type(
+                "Key",
+                (),
+                {"key": "ctrl+f", "stop": lambda self: None, "prevent_default": lambda self: None},
+            )()
+            app.screen.on_key(key_event)
+            app.screen.query_one("#dir-jump", Input).value = "pyherdr"
+            await app.screen.on_input_changed(type("Changed", (), {"value": "pyherdr"})())
+            for _ in range(10):
+                await asyncio.sleep(0.1)
+                if app.screen._search_rows:
+                    break
+            if view == "workspace-search-selected" and app.screen._search_rows:
+                app.screen._toggle_active_search_row()
+                await app.screen._populate()
+                await pilot.pause(0.2)
+        await pilot.pause(0.2)
+
+
+def _prepare_workspace_search_fixture(root: Path, view: str) -> list[SearchRoot]:
+    if view == "workspace-search-stale":
+        missing = root / "pyherdr-missing"
+        return [SearchRoot(str(missing), label="pyherdr-missing", source="recent")]
+    if view == "workspace-search-long-path":
+        repo = (
+            root
+            / "enterprise-platform-with-a-very-long-name"
+            / "customers"
+            / "regional-command-center"
+            / "pyherdr-operations-console"
+        )
+        repo.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        return [SearchRoot(str(root), label="long path roots", source="workspace")]
+    repo = root / "pyherdr-demo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    (root / "pyherdr-docs").mkdir()
+    (root / "node_modules" / "pyherdr-hidden").mkdir(parents=True)
+    return [SearchRoot(str(root), label="demo roots", source="workspace")]
+
+
 async def _render(path: Path, width: int, height: int, view: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     app = PyHerdrTui(client=DemoScreenshotClient(), poll_interval=100)
@@ -354,31 +421,9 @@ async def _render(path: Path, width: int, height: int, view: str) -> Path:
         elif view == "workspace-picker":
             app.push_screen(DemoDirPickerScreen())
             await pilot.pause(0.5)
-        elif view == "workspace-search":
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                repo = root / "pyherdr-demo"
-                repo.mkdir()
-                (repo / ".git").mkdir()
-                (root / "pyherdr-docs").mkdir()
-                (root / "node_modules" / "pyherdr-hidden").mkdir(parents=True)
-                app.push_screen(
-                    DirPickerScreen(
-                        str(root),
-                        lambda selected: None,
-                        search_roots=[SearchRoot(str(root), label="demo roots", source="workspace")],
-                    )
-                )
-                await pilot.pause(0.5)
-                if isinstance(app.screen, DirPickerScreen):
-                    key_event = type(
-                        "Key",
-                        (),
-                        {"key": "ctrl+f", "stop": lambda self: None, "prevent_default": lambda self: None},
-                    )()
-                    app.screen.on_key(key_event)
-                    await app.screen.on_input_changed(type("Changed", (), {"value": "pyherdr"})())
-                    await pilot.pause(0.5)
+        elif view.startswith("workspace-search"):
+            await _open_workspace_search_demo(app, pilot, view)
+            await pilot.pause(0.5)
         path.write_text(app.export_screenshot(title="PyHerdr demo TUI", simplify=False), encoding="utf-8")
     return path
 
@@ -387,6 +432,6 @@ def render_demo_screenshot(path: Path, *, width: int = 132, height: int = 38, vi
     """Render the real Textual TUI with deterministic demo data to an SVG file."""
 
     normalized = view.strip().lower()
-    if normalized not in ("main", "workflow", "fanout", "workspace-picker", "workspace-search"):
+    if normalized not in DEMO_SCREENSHOT_VIEWS:
         raise ValueError(f"unknown demo screenshot view: {view}")
     return asyncio.run(_render(path, width, height, normalized))
