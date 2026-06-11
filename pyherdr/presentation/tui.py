@@ -60,6 +60,7 @@ _DIR_PICKER_PAGE_STEP = 8
 # Prefix action key -> internal action name (defaults; config can remap).
 _DEFAULT_PREFIX_ACTIONS = {
     "c": "new_tab",
+    "[": "copy_mode",
     "v": "split_sbs",
     "-": "split_stack",
     "n": "next_tab",
@@ -326,6 +327,7 @@ def _help_text(palette: Palette) -> Text:
     row("z", "zoom pane")
     row("m", "pane menu (split/zoom/scroll/close)")
     row("x", "close pane")
+    row("[", "copy mode")
     row("pgup/pgdn", "scroll the pane")
     group("tabs")
     row("c", "new tab")
@@ -976,6 +978,125 @@ class NavigatorScreen(ModalScreen[None]):
         if event.key == "escape":
             event.stop()
             self.dismiss()
+
+
+class CopyModeScreen(ModalScreen[None]):
+    """Read-only scrollback view with line selection and clipboard copy."""
+
+    DEFAULT_CSS = """
+    CopyModeScreen { align: center middle; background: $ph-base 70%; }
+    #copy-box {
+        width: 96;
+        height: auto;
+        max-width: 96%;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #copy-scroll { height: auto; max-height: 22; }
+    #copy-body { color: $ph-text; }
+    #copy-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, pane_label: str, lines: list[str], palette: Palette) -> None:
+        super().__init__()
+        self._pane_label = pane_label
+        self._lines = lines or [""]
+        self._palette = palette
+        self._cursor = max(0, len(self._lines) - 1)
+        self._anchor: int | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="copy-box"):
+            with VerticalScroll(id="copy-scroll"):
+                yield Static(self._render_body(), id="copy-body")
+            yield Static("j/k move · space select · y/enter copy · q/esc close", id="copy-foot")
+
+    def on_mount(self) -> None:
+        self.query_one("#copy-box", Vertical).border_title = f"copy mode · {self._pane_label}"
+        self.focus()
+        self.call_after_refresh(self._scroll_cursor_visible)
+
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        character = getattr(event, "character", None)
+        if event.key in ("escape", "q"):
+            self.dismiss()
+        elif event.key in ("down", "j"):
+            self._move(1)
+        elif event.key in ("up", "k"):
+            self._move(-1)
+        elif event.key == "pagedown":
+            self._move(10)
+        elif event.key == "pageup":
+            self._move(-10)
+        elif event.key == "g" or character == "g":
+            self._jump(0)
+        elif event.key in ("G", "upper_g") or character == "G":
+            self._jump(len(self._lines) - 1)
+        elif event.key in ("space", "v"):
+            self._toggle_selection()
+        elif event.key in ("enter", "y"):
+            self._copy_selection()
+
+    def _move(self, delta: int) -> None:
+        self._jump(self._cursor + delta)
+
+    def _jump(self, index: int) -> None:
+        self._cursor = max(0, min(len(self._lines) - 1, index))
+        self._refresh_body()
+        self.call_after_refresh(self._scroll_cursor_visible)
+
+    def _toggle_selection(self) -> None:
+        self._anchor = self._cursor if self._anchor is None else None
+        self._refresh_body()
+
+    def _selected_range(self) -> tuple[int, int]:
+        if self._anchor is None:
+            return (self._cursor, self._cursor)
+        return (min(self._anchor, self._cursor), max(self._anchor, self._cursor))
+
+    def _selection_text(self) -> str:
+        start, end = self._selected_range()
+        return "\n".join(self._lines[start : end + 1]).rstrip("\n")
+
+    def _copy_selection(self) -> None:
+        text = self._selection_text()
+        if text:
+            self.app.copy_to_clipboard(text)
+            self.app.notify("copied selection to clipboard", timeout=3)
+        self.dismiss()
+
+    def _refresh_body(self) -> None:
+        self.query_one("#copy-body", Static).update(self._render_body())
+
+    def _scroll_cursor_visible(self) -> None:
+        try:
+            self.query_one("#copy-scroll", VerticalScroll).scroll_to(y=self._cursor, animate=False)
+        except Exception:
+            pass
+
+    def _render_body(self) -> Text:
+        selected_start, selected_end = self._selected_range()
+        body = Text()
+        for index, line in enumerate(self._lines):
+            selected = selected_start <= index <= selected_end and self._anchor is not None
+            cursor = index == self._cursor
+            if cursor:
+                prefix = "> "
+                style = f"bold {self._palette.text}"
+            else:
+                prefix = "  "
+                style = self._palette.text
+            if selected:
+                style = f"bold {self._palette.panel_bg} on {self._palette.accent}"
+            body.append(prefix, style=self._palette.accent if cursor else self._palette.overlay0)
+            body.append(line or " ", style=style)
+            if index < len(self._lines) - 1:
+                body.append("\n")
+        return body
 
 
 class CommandPaletteScreen(ModalScreen[None]):
@@ -2628,6 +2749,8 @@ class PyHerdrTui(App):
             self._open_command_palette()
         elif action == "pane_menu":
             self._open_pane_menu()
+        elif action == "copy_mode":
+            self._open_copy_mode(self._pane_id)
         elif action == "copy_output":
             self._copy_pane_output(self._pane_id)
         elif action == "resource_monitor":
@@ -2696,6 +2819,7 @@ class PyHerdrTui(App):
                         ("split right", "new_pane", None),
                         ("split down", "split_down", None),
                         ("zoom", "zoom", None),
+                        ("copy mode", "copy_mode", arg),
                         ("copy output", "copy_output", arg),
                         ("resource usage", "pane_stats", arg),
                         ("close", "close_pane", arg),
@@ -2741,6 +2865,8 @@ class PyHerdrTui(App):
             self._scroll_pane(arg, "up" if action == "pane_scroll_up" else "down")
         elif action == "copy_output" and arg:
             self._copy_pane_output(arg)
+        elif action == "copy_mode" and arg:
+            self._open_copy_mode(arg)
         elif action == "pane_stats" and arg:
             self._open_stats(f"resource usage · {self._pane_label_map().get(arg, arg)}", [arg])
         elif action == "workspace_stats" and arg:
@@ -2751,7 +2877,7 @@ class PyHerdrTui(App):
             self._open_workflow_view()
         elif action in (
             "help", "palette", "settings", "detach", "quit",
-            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout",
+            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "copy_mode",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
             self._run_named_action(action)
@@ -2858,6 +2984,7 @@ class PyHerdrTui(App):
         ("Split pane down", "split_stack"),
         ("Zoom pane", "zoom"),
         ("Resize mode", "resize"),
+        ("Copy mode", "copy_mode"),
         ("Copy pane output", "copy_output"),
         ("Close pane", "close_pane"),
         ("Close tab", "close_tab"),
@@ -2896,6 +3023,17 @@ class PyHerdrTui(App):
         else:
             self._run_named_action(value)
 
+    def _open_copy_mode(self, pane_id: str | None) -> None:
+        """Open a modal scrollback selector for a pane."""
+        if not pane_id:
+            return
+        try:
+            text = self._client.pane_read(pane_id, lines=2000)
+        except Exception:
+            return
+        lines = text.splitlines() or [""]
+        self.push_screen(CopyModeScreen(self._pane_label_map().get(pane_id, pane_id), lines, self._palette))
+
     def _open_pane_menu(self) -> None:
         """A selectable pop-up of actions for the focused pane (ctrl+b m)."""
         if not self._pane_id:
@@ -2910,6 +3048,7 @@ class PyHerdrTui(App):
                     ("zoom", "zoom", None),
                     ("scroll up", "pane_scroll_up", pane_id),
                     ("scroll down", "pane_scroll_down", pane_id),
+                    ("copy mode", "copy_mode", pane_id),
                     ("copy output", "copy_output", pane_id),
                     ("resource usage", "pane_stats", pane_id),
                     ("close pane", "close_pane", pane_id),

@@ -4,6 +4,7 @@ import unittest
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
+    CopyModeScreen,
     DirPickerHelpScreen,
     DirPickerScreen,
     DirSearchMenuScreen,
@@ -1851,10 +1852,38 @@ search_roots = ["{configured.as_posix()}"]
             app._open_pane_menu()
             await pilot.pause()
             self.assertIsInstance(app.screen, ContextMenuScreen)
-            await pilot.click("#ctx-7")  # "close pane" (after split×2, zoom, scroll×2, copy, resource usage)
+            await pilot.click("#ctx-8")  # "close pane" (after split×2, zoom, scroll×2, copy mode, copy, resource)
             await pilot.pause()
             await pilot.pause()
             self.assertIn("1-1", client.closed_panes)
+
+    async def test_copy_mode_selects_and_copies_scrollback_lines(self):
+        class ScrollbackClient(FakeClient):
+            def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
+                self.reads.append((pane_id, lines, styled, cursor))
+                return "alpha\nbeta\ngamma"
+
+        client = ScrollbackClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            copied: list[str] = []
+            app.copy_to_clipboard = lambda text: copied.append(text)  # type: ignore[method-assign]
+            app._pane_id = "1-1"
+
+            app._run_named_action("copy_mode")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, CopyModeScreen)
+            self.assertEqual(client.reads[-1], ("1-1", 2000, False, False))
+
+            app.screen.on_key(self._key_event("g"))
+            app.screen.on_key(self._key_event("space"))
+            app.screen.on_key(self._key_event("down"))
+            app.screen.on_key(self._key_event("y"))
+            await pilot.pause()
+
+            self.assertEqual(copied, ["alpha\nbeta"])
+            self.assertNotIsInstance(app.screen, CopyModeScreen)
 
     async def test_copy_pane_output_to_clipboard(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
