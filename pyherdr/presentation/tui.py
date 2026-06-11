@@ -1403,7 +1403,7 @@ class DirPickerScreen(ModalScreen[None]):
         margin: 0 1 0 1;
     }
     .dir-current-open:hover { background: $ph-accent; color: $ph-base; }
-    #dir-list { height: auto; max-height: 16; }
+    #dir-list { height: auto; max-height: 15; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
     .dir-quick { width: 1fr; color: $ph-blue; padding: 0 1; }
@@ -1415,7 +1415,8 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-stale { color: $ph-subtext0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
-    #dir-footer { height: auto; padding: 1 0 0 0; }
+    #dir-input-hint { color: $ph-subtext0; height: 1; padding: 0 1 0 1; }
+    #dir-footer { height: auto; padding: 0 0 0 0; }
     #dir-foot { width: 1fr; color: $ph-subtext0; height: auto; min-height: 1; }
     .dir-help-button {
         width: 10;
@@ -1473,13 +1474,14 @@ class DirPickerScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
             yield Input(placeholder="search, cd, ls, pwd, open, or paste a path", id="dir-jump")
+            yield Static("filter folders here, or use ls text / cd path / open path", id="dir-input-hint")
             with Horizontal(id="dir-current"):
                 with Horizontal(id="dir-current-card"):
                     yield Static("", id="dir-path")
                     yield Clickable("Open Folder", "dir_open", classes="dir-current-open", id="dir-open-current")
             yield VerticalScroll(id="dir-list")
             with Horizontal(id="dir-footer"):
-                yield Static("type to filter · ↑/↓ move · Enter open · Esc cancel", id="dir-foot")
+                yield Static("↑/↓ move · Enter open · Esc cancel", id="dir-foot")
                 yield Clickable("? Help", "dir_help", classes="dir-help-button", id="dir-help")
 
     async def on_mount(self) -> None:
@@ -1689,7 +1691,7 @@ class DirPickerScreen(ModalScreen[None]):
 
     def _update_browse_footer(self) -> None:
         self._update_footer(
-            "type to filter · ↑/↓ move · Enter open · Esc cancel"
+            "↑/↓ move · Enter open · Esc cancel"
         )
 
     def _update_footer(self, help_text: str) -> None:

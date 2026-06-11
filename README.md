@@ -157,9 +157,10 @@ quick jumps for the workspace root, recent roots, git repo root, process cwd,
 and home. The current folder is shown in a boxed card beside an `Open Folder`
 action so the target is explicit. Typing in the picker filters child folders and quick roots;
 arrow keys move the highlighted row, and Enter follows the highlighted folder
-or quick root. The visible footer keeps the common flow small: type to filter,
-move with arrows, press Enter to open, or press Esc to cancel. The picker also
-has a `Help` button plus `?` / `F1` for the full shortcut and command reference.
+or quick root. The input area carries the typing hint for filtering and safe
+commands, while the visible footer stays small: move with arrows, press Enter to
+open, or press Esc to cancel. The picker also has a `Help` button plus `?` /
+`F1` for the full shortcut and command reference.
 `Backspace` goes up one folder, `Ctrl+H` jumps home, `Ctrl+W` jumps back to the
 current workspace root, and `Ctrl+R` jumps to the current git repo root when one
 is available. Pressing Enter on a real path jumps there. The input also accepts safe explorer

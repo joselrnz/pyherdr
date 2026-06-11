@@ -556,7 +556,9 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     DirPickerScreen(child, selected.append, quick_paths=[("current workspace", workspace)])
                 )
                 await pilot.pause()
-                self.assertIn("type to filter", self._widget_text(app.screen, "#dir-foot"))
+                self.assertIn("filter folders here", self._widget_text(app.screen, "#dir-input-hint"))
+                self.assertIn("Enter open", self._widget_text(app.screen, "#dir-foot"))
+                self.assertNotIn("type to filter", self._widget_text(app.screen, "#dir-foot"))
                 self.assertNotIn("^W ws", self._widget_text(app.screen, "#dir-foot"))
 
                 app.screen.on_key(self._key_event("backspace"))
