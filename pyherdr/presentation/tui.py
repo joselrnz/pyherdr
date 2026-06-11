@@ -404,6 +404,7 @@ def _dir_picker_help_text() -> Text:
     text.append("  cd path      change folder\n")
     text.append("  pwd          show current path\n")
     text.append("  open path    open folder\n")
+    text.append("  copy path    copy folder path\n")
     text.append("\nsearch mode\n", style="bold")
     text.append("  PageUp/Down  page results\n")
     text.append("  Space        select result\n")
@@ -1807,7 +1808,7 @@ class DirPickerScreen(ModalScreen[None]):
         command, separator, rest = raw.partition(" ")
         verb = command.lower()
         arg = rest.strip() if separator else ""
-        if verb not in {"cd", "ls", "dir", "pwd", "open"}:
+        if verb not in {"cd", "ls", "dir", "pwd", "open", "copy"}:
             return False
         if verb == "pwd":
             self._clear_input_filter(status=f"pwd: {self._display_path(self._cwd)}")
@@ -1818,7 +1819,10 @@ class DirPickerScreen(ModalScreen[None]):
         if verb == "cd":
             self._handle_cd_command(arg)
             return True
-        self._handle_open_command(arg)
+        if verb == "open":
+            self._handle_open_command(arg)
+            return True
+        self._handle_copy_command(arg)
         return True
 
     def _handle_ls_command(self, arg: str) -> None:
@@ -1858,6 +1862,19 @@ class DirPickerScreen(ModalScreen[None]):
         target, _from_file = folder
         self._on_select(os.path.abspath(target))
         self.dismiss()
+
+    def _handle_copy_command(self, arg: str) -> None:
+        if not arg or arg == ".":
+            target = os.path.abspath(self._cwd)
+        else:
+            folder = self._folder_for_input_path(arg)
+            if not folder:
+                self._clear_input_filter(status=f"copy: not found: {arg}")
+                return
+            target, _from_file = folder
+            target = os.path.abspath(target)
+        self.app.copy_to_clipboard(target)
+        self._clear_input_filter(status=f"copied: {self._display_path(target)}")
 
     def on_activated(self, message: Activated) -> None:
         message.stop()
@@ -1994,7 +2011,7 @@ class DirPickerScreen(ModalScreen[None]):
     @staticmethod
     def _is_command_draft(value: str) -> bool:
         command = value.strip().split(" ", 1)[0].lower()
-        return command in {"cd", "ls", "dir", "pwd", "open"}
+        return command in {"cd", "ls", "dir", "pwd", "open", "copy"}
 
     def _enter_browse_path(self, path: str) -> None:
         self._cwd = os.path.abspath(path)

@@ -597,6 +597,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             help_text = self._widget_text(app.screen, "#dir-help-box")
             self.assertIn("Ctrl+W", help_text)
             self.assertIn("ls text", help_text)
+            self.assertIn("copy path", help_text)
             self.assertIn("search mode", help_text)
 
     async def test_dir_picker_input_accepts_safe_navigation_commands(self):
@@ -610,7 +611,9 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         os.makedirs(nested)
         os.makedirs(beta)
         selected: list[str] = []
+        copied: list[str] = []
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app.copy_to_clipboard = lambda text: copied.append(text)  # type: ignore[method-assign]
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             app.push_screen(DirPickerScreen(base, selected.append))
@@ -631,9 +634,18 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIn(os.path.abspath(alpha).replace("\\", "/"), self._widget_text(app.screen, "#dir-foot"))
 
+            app.screen.on_input_submitted(self._submit_event("copy"))
+            await pilot.pause()
+            self.assertEqual(copied[-1], os.path.abspath(alpha))
+            self.assertIn("copied:", self._widget_text(app.screen, "#dir-foot"))
+
             app.screen.on_input_submitted(self._submit_event("cd .."))
             await pilot.pause()
             self.assertIn(os.path.abspath(base).replace("\\", "/"), self._widget_text(app.screen, "#dir-path"))
+
+            app.screen.on_input_submitted(self._submit_event("copy alpha"))
+            await pilot.pause()
+            self.assertEqual(copied[-1], os.path.abspath(alpha))
 
             app.screen.on_input_submitted(self._submit_event("open alpha"))
             await pilot.pause()

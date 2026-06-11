@@ -165,8 +165,9 @@ open, or press Esc to cancel. The picker also has a `Help` button plus `?` /
 current workspace root, and `Ctrl+R` jumps to the current git repo root when one
 is available. Pressing Enter on a real path jumps there. The input also accepts safe explorer
 commands: `ls` refreshes, `ls text` filters, `cd path` changes folder, `pwd`
-prints the current path in the footer, and `open path` opens that folder. File
-paths resolve to their containing folder because the picker selects workspaces.
+prints the current path in the footer, `copy path` copies the resolved folder,
+and `open path` opens that folder. File paths resolve to their containing folder
+because the picker selects workspaces.
 Press `ctrl+f` inside the picker to search known workspace roots and recent
 repositories, then use arrow keys, PageUp/PageDown, Space, Enter, or mouse
 double-click to select and open a result. Search rows show their source,
