@@ -49,6 +49,7 @@ _STATUS_PRIORITY = ["blocked", "working", "done", "idle", "unknown"]
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # Quick accent colours offered in the theme picker.
 _ACCENT_SWATCHES = ["#89b4fa", "#f5c2e7", "#a6e3a1", "#fab387", "#cba6f7", "#f9e2af", "#94e2d5", "#9399b2"]
+_DIR_PICKER_PAGE_STEP = 8
 # Prefix action key -> internal action name (defaults; config can remap).
 _DEFAULT_PREFIX_ACTIONS = {
     "c": "new_tab",
@@ -1244,6 +1245,60 @@ class ShellPickerScreen(ModalScreen[None]):
             self.dismiss()
 
 
+class DirSearchMenuScreen(ModalScreen[None]):
+    """Context menu for a workspace search result row."""
+
+    DEFAULT_CSS = """
+    DirSearchMenuScreen { align: center middle; background: $ph-base 50%; }
+    #dir-search-menu-box {
+        width: auto;
+        min-width: 24;
+        height: auto;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 0 1;
+    }
+    .dir-search-menu-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .dir-search-menu-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    """
+
+    def __init__(self, row: ExplorerRow, on_action: Callable[[str, str | None], None]) -> None:
+        super().__init__()
+        self._row = row
+        self._on_action = on_action
+
+    def compose(self) -> ComposeResult:
+        rows = [
+            Clickable(label, action, arg, id=f"dir-search-menu-{index}", classes="dir-search-menu-row")
+            for index, (label, action, arg) in enumerate(self._items())
+        ]
+        box = Vertical(*rows, id="dir-search-menu-box")
+        box.border_title = self._row.label
+        yield box
+
+    def _items(self) -> list[tuple[str, str, str | None]]:
+        items: list[tuple[str, str, str | None]] = []
+        if not self._row.stale:
+            items.append(("open result", "dir_search_open", self._row.path))
+        items.append(("open parent", "dir_search_parent", self._row.path))
+        items.append(("copy path", "dir_search_copy_path", self._row.path))
+        if self._row.stale:
+            items.append(("remove stale", "dir_search_hide_stale", self._row.path))
+        return items
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        action, arg = message.action, message.arg
+        self.dismiss()
+        self.app.call_after_refresh(self._on_action, action, arg)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
 class DirPickerScreen(ModalScreen[None]):
     """A folder browser: click into directories, then 'open this folder'."""
 
@@ -1462,6 +1517,7 @@ class DirPickerScreen(ModalScreen[None]):
                     row.path,
                     classes=classes,
                     dbl_action="dir_search_open",
+                    ctx_action="dir_search_menu",
                 )
             )
         await listing.mount(*row_widgets)
@@ -1555,8 +1611,8 @@ class DirPickerScreen(ModalScreen[None]):
 
     def _update_search_footer(self) -> None:
         self._update_footer(
-            "search mode · ↑/↓ move · space select · enter open · p parent · "
-            "delete hide stale · ctrl+l path mode · esc cancel"
+            "search mode · ↑/↓ move · pgup/pgdn page · space select · enter open · "
+            "p parent · y copy · delete hide stale · ctrl+l path mode · esc cancel"
         )
 
     def _update_browse_footer(self) -> None:
@@ -1743,6 +1799,8 @@ class DirPickerScreen(ModalScreen[None]):
             self.run_worker(self._populate(), exclusive=True)
         elif message.action == "dir_search_open" and message.arg:
             self._open_search_path(message.arg)
+        elif message.action == "dir_search_menu" and message.arg:
+            self._open_search_menu(message.arg)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -1799,10 +1857,22 @@ class DirPickerScreen(ModalScreen[None]):
             delta = -1 if event.key == "up" else 1
             self._move_active_browse_row(delta)
             self.run_worker(self._populate(), exclusive=True)
+        elif not self._search_mode and event.key in ("pageup", "pagedown"):
+            event.stop()
+            event.prevent_default()
+            delta = -_DIR_PICKER_PAGE_STEP if event.key == "pageup" else _DIR_PICKER_PAGE_STEP
+            self._move_active_browse_row(delta)
+            self.run_worker(self._populate(), exclusive=True)
         elif self._search_mode and event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
             delta = -1 if event.key == "up" else 1
+            self._move_active_search_row(delta)
+            self.run_worker(self._populate(), exclusive=True)
+        elif self._search_mode and event.key in ("pageup", "pagedown"):
+            event.stop()
+            event.prevent_default()
+            delta = -_DIR_PICKER_PAGE_STEP if event.key == "pageup" else _DIR_PICKER_PAGE_STEP
             self._move_active_search_row(delta)
             self.run_worker(self._populate(), exclusive=True)
         elif self._search_mode and event.key == "space":
@@ -1818,6 +1888,10 @@ class DirPickerScreen(ModalScreen[None]):
             event.stop()
             event.prevent_default()
             self._hide_active_stale_search_row()
+        elif self._search_mode and event.key in {"y", "ctrl+y"}:
+            event.stop()
+            event.prevent_default()
+            self._copy_active_search_path()
 
     @staticmethod
     def _is_command_draft(value: str) -> bool:
@@ -1872,6 +1946,24 @@ class DirPickerScreen(ModalScreen[None]):
         if row is not None:
             self._open_search_path(row.path)
 
+    def _open_search_menu(self, path: str) -> None:
+        self._focus_search_path(path)
+        row = self._active_search_row()
+        if row is not None:
+            self.app.push_screen(DirSearchMenuScreen(row, self._handle_search_menu_action))
+
+    def _handle_search_menu_action(self, action: str, path: str | None) -> None:
+        if path:
+            self._focus_search_path(path)
+        if action == "dir_search_open" and path:
+            self._open_search_path(path)
+        elif action == "dir_search_parent":
+            self._open_active_search_parent()
+        elif action == "dir_search_copy_path" and path:
+            self._copy_search_path(path)
+        elif action == "dir_search_hide_stale":
+            self._hide_active_stale_search_row()
+
     def _open_active_search_parent(self) -> None:
         row = self._active_search_row()
         if row is None:
@@ -1882,6 +1974,22 @@ class DirPickerScreen(ModalScreen[None]):
             self.run_worker(self._populate(), exclusive=True)
             return
         self._set_cwd(parent, status=f"parent: {self._display_path(parent)}")
+
+    def _copy_active_search_path(self) -> None:
+        row = self._active_search_row()
+        if row is not None:
+            self._copy_search_path(row.path)
+
+    def _copy_search_path(self, path: str) -> None:
+        resolved = os.path.abspath(path)
+        display = self._display_path(resolved)
+        try:
+            self.app.copy_to_clipboard(resolved)
+        except Exception:
+            self._command_status = f"path: {display}"
+        else:
+            self._command_status = f"copied path: {display}"
+        self.run_worker(self._populate(), exclusive=True)
 
     def _hide_active_stale_search_row(self) -> None:
         row = self._active_search_row()

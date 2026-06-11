@@ -5,6 +5,7 @@ from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
     DirPickerScreen,
+    DirSearchMenuScreen,
     FanoutScreen,
     HelpScreen,
     NavigatorScreen,
@@ -808,6 +809,33 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1 folder", plain)
         self.assertIn(os.path.abspath(root).replace("\\", "/"), plain)
 
+    def test_dir_picker_search_menu_items_reflect_stale_state(self):
+        live = ExplorerRow(
+            row_id="repo:C:/repo",
+            kind="repo",
+            label="repo",
+            path="C:/repo",
+            score=1000,
+            source="workspace",
+        )
+        stale = ExplorerRow(
+            row_id="stale:C:/missing",
+            kind="stale",
+            label="missing",
+            path="C:/missing",
+            score=1000,
+            source="recent",
+            stale=True,
+        )
+
+        live_labels = [label for label, _action, _arg in DirSearchMenuScreen(live, lambda *_: None)._items()]
+        stale_labels = [label for label, _action, _arg in DirSearchMenuScreen(stale, lambda *_: None)._items()]
+
+        self.assertIn("open result", live_labels)
+        self.assertNotIn("remove stale", live_labels)
+        self.assertNotIn("open result", stale_labels)
+        self.assertIn("remove stale", stale_labels)
+
     async def test_dir_picker_search_parent_key_enters_result_parent(self):
         import os
         import tempfile
@@ -926,6 +954,101 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     recents = load_workspace_recents(include_stale=True)
 
         self.assertEqual(recents, [])
+
+    async def test_dir_picker_search_page_keys_jump_results(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        for index in range(12):
+            os.makedirs(os.path.join(root, f"alpha-{index:02d}"))
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    lambda path: None,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+
+            app.screen.on_key(self._key_event("pagedown"))
+            await pilot.pause()
+            self.assertIn("> [ ] dir   alpha-08", self._screen_text(app.screen, "#dir-list"))
+
+            app.screen.on_key(self._key_event("pageup"))
+            await pilot.pause()
+            self.assertIn("> [ ] dir   alpha-00", self._screen_text(app.screen, "#dir-list"))
+
+    async def test_dir_picker_search_y_copies_active_path(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        alpha = os.path.join(root, "alpha-app")
+        os.makedirs(alpha)
+        copied: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app.copy_to_clipboard = lambda text: copied.append(text)  # type: ignore[method-assign]
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    lambda path: None,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+
+            app.screen.on_key(self._key_event("y"))
+            await pilot.pause(0.2)
+
+            self.assertEqual(copied, [os.path.abspath(alpha)])
+            self.assertIn("copied path", self._widget_text(app.screen, "#dir-foot"))
+
+    async def test_dir_picker_search_right_click_menu_copies_path(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        alpha = os.path.join(root, "alpha-app")
+        os.makedirs(alpha)
+        copied: list[str] = []
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app.copy_to_clipboard = lambda text: copied.append(text)  # type: ignore[method-assign]
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                DirPickerScreen(
+                    root,
+                    lambda path: None,
+                    search_roots=[SearchRoot(root, label="tmp", source="workspace")],
+                    search_debounce=0,
+                )
+            )
+            await pilot.pause()
+            app.screen.on_key(self._key_event("ctrl+f"))
+            await app.screen.on_input_changed(self._changed_event("alpha"))
+            await pilot.pause()
+            app.screen.on_activated(self._activated("dir_search_menu", os.path.abspath(alpha)))
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "DirSearchMenuScreen")
+
+            app.screen.on_activated(self._activated("dir_search_copy_path", os.path.abspath(alpha)))
+            await pilot.pause()
+
+            self.assertEqual(copied, [os.path.abspath(alpha)])
 
     async def test_rename_screen_submits_value(self):
         captured: list[str] = []
