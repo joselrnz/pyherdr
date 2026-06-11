@@ -471,6 +471,11 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(os.path.abspath(base).replace("\\", "/"), current_text)
             self.assertIn("Open Folder", self._widget_text(app.screen, "#dir-open-current"))
             self.assertNotIn("open this folder", self._screen_text(app.screen, "#dir-list").lower())
+            css = DirPickerScreen.DEFAULT_CSS
+            self.assertIn("width: 13;", css)
+            self.assertIn("height: 1;", css)
+            self.assertIn("background: $ph-surface0;", css)
+            self.assertNotIn("min-height: 3;", css)
 
             app.screen.on_activated(self._activated("dir_open", None))
             await pilot.pause()
@@ -496,7 +501,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app.push_screen(DirPickerScreen(base, selected.append))
             await pilot.pause()
             listing = self._screen_text(app.screen, "#dir-list")
-            self.assertIn("> ..", listing)
+            self.assertIn("> .. parent folder", listing)
 
             app.screen.on_key(self._key_event("down"))
             await pilot.pause()
@@ -543,7 +548,9 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.screen.on_key(self._key_event("down"))
             await pilot.pause()
-            self.assertIn("> repo root:", self._screen_text(app.screen, "#dir-list"))
+            listing = self._screen_text(app.screen, "#dir-list")
+            self.assertIn("> repo root ·", listing)
+            self.assertNotIn(f"repo root: {os.path.abspath(quick)}", listing)
 
             app.screen.on_input_submitted(self._submit_event(""))
             await pilot.pause()
@@ -580,7 +587,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                     DirPickerScreen(child, selected.append, quick_paths=[("current workspace", workspace)])
                 )
                 await pilot.pause()
-                self.assertIn("filter folders here", self._widget_text(app.screen, "#dir-input-hint"))
+                self.assertIn("filter here", self._widget_text(app.screen, "#dir-input-hint"))
                 self.assertIn("Enter open", self._widget_text(app.screen, "#dir-foot"))
                 self.assertNotIn("type to filter", self._widget_text(app.screen, "#dir-foot"))
                 self.assertNotIn("^W ws", self._widget_text(app.screen, "#dir-foot"))

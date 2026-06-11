@@ -1396,21 +1396,20 @@ class DirPickerScreen(ModalScreen[None]):
         padding: 0 1;
     }
     .dir-current-open {
-        width: 16;
-        height: 3;
-        min-height: 3;
-        background: $ph-green;
-        color: $ph-base;
+        width: 13;
+        height: 1;
+        background: $ph-surface0;
+        color: $ph-green;
         content-align: center middle;
         text-style: bold;
-        padding: 0 1;
-        margin: 0 1 0 1;
+        padding: 0 0;
+        margin: 1 1 0 1;
     }
-    .dir-current-open:hover { background: $ph-accent; color: $ph-base; }
+    .dir-current-open:hover { background: $ph-green; color: $ph-base; }
     #dir-list { height: auto; max-height: 15; }
     .dir-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-row:hover { background: $ph-surface0; }
-    .dir-quick { width: 1fr; color: $ph-blue; padding: 0 1; }
+    .dir-quick { width: 1fr; color: $ph-subtext0; padding: 0 1; }
     .dir-quick:hover { background: $ph-surface0; }
     .dir-search { width: 1fr; color: $ph-text; padding: 0 1; }
     .dir-search:hover { background: $ph-surface0; }
@@ -1419,17 +1418,17 @@ class DirPickerScreen(ModalScreen[None]):
     .dir-stale { color: $ph-subtext0; }
     .dir-open { width: 1fr; color: $ph-green; text-style: bold; padding: 0 1; }
     .dir-open:hover { background: $ph-accent; color: $ph-base; }
-    #dir-input-hint { color: $ph-subtext0; height: 1; padding: 0 1 0 1; }
-    #dir-footer { height: auto; padding: 0 0 0 0; }
+    #dir-input-hint { color: $ph-overlay0; height: 1; padding: 0 1 0 1; }
+    #dir-footer { height: 1; padding: 0 0 0 0; }
     #dir-foot { width: 1fr; color: $ph-subtext0; height: auto; min-height: 1; }
     .dir-help-button {
-        width: 10;
+        width: 8;
         height: 1;
-        background: $ph-surface0;
+        background: $ph-mantle;
         color: $ph-accent;
         content-align: center middle;
         text-style: bold;
-        padding: 0 1;
+        padding: 0 0;
     }
     .dir-help-button:hover { background: $ph-accent; color: $ph-base; }
     """
@@ -1477,8 +1476,8 @@ class DirPickerScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dir-box"):
-            yield Input(placeholder="search, cd, ls, pwd, open, or paste a path", id="dir-jump")
-            yield Static("filter folders here, or use ls text / cd path / open path", id="dir-input-hint")
+            yield Input(placeholder=" search folders, cd, ls, open, or paste a path", id="dir-jump")
+            yield Static("filter here, or use ls text / cd path / open path", id="dir-input-hint")
             with Horizontal(id="dir-current"):
                 with Horizontal(id="dir-current-card"):
                     yield Static("", id="dir-path")
@@ -1519,7 +1518,7 @@ class DirPickerScreen(ModalScreen[None]):
                 continue
             browse_rows.append(
                 DirBrowseRow(
-                    f"{label}: {path}",
+                    label,
                     "dir_quick",
                     path,
                     "dir-quick",
@@ -1553,7 +1552,28 @@ class DirPickerScreen(ModalScreen[None]):
 
     def _browse_row_text(self, row: DirBrowseRow, index: int) -> Text:
         cursor = ">" if index == self._active_browse_row else " "
-        return Text(f"{cursor} {row.label}")
+        text = Text(f"{cursor} ")
+        if row.action == "dir_up":
+            text.append("..", style="bold")
+            text.append(" parent folder", style="dim")
+            return text
+        if row.action == "dir_quick" and row.arg:
+            text.append(row.label, style="bold")
+            detail = self._quick_path_detail(row.label, row.arg)
+            if detail:
+                text.append(" · ", style="dim")
+                text.append(detail, style="dim")
+            return text
+        text.append(row.label)
+        return text
+
+    @staticmethod
+    def _quick_path_detail(label: str, path: str) -> str:
+        normalized = os.path.abspath(path).rstrip("\\/")
+        leaf = os.path.basename(normalized) or normalized
+        if leaf and leaf.lower() in label.lower():
+            return ""
+        return leaf
 
     async def _populate_search(self, listing: VerticalScroll, needle: str) -> None:
         if not needle:
