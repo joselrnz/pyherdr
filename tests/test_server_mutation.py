@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import Mock, patch
 
-from pyherdr.server import mutates_state, quiet_request, skips_state_lock
+from pyherdr.presentation.client import ServerClient
+from pyherdr.server import ServerInfo, mutates_state, quiet_request, skips_state_lock
 
 
 class MutatesStateTests(unittest.TestCase):
@@ -47,6 +49,35 @@ class MutatesStateTests(unittest.TestCase):
             "pane.scroll",
         ):
             self.assertTrue(skips_state_lock(method), method)
+
+
+class ServerClientRequestTests(unittest.TestCase):
+    def test_server_client_reuses_server_info(self):
+        info = ServerInfo("127.0.0.1", 12345, 1, "state.json", "token")
+        with (
+            patch("pyherdr.presentation.client.start_background", return_value=info) as start,
+            patch("pyherdr.presentation.client.request", return_value={"result": {"type": "ok"}}) as send,
+        ):
+            client = ServerClient()
+            client.send_text("pane-1", "a")
+            client.send_text("pane-1", "b")
+
+        self.assertEqual(start.call_count, 1)
+        self.assertEqual(send.call_count, 2)
+
+    def test_server_client_rediscovers_after_failed_cached_request(self):
+        first = ServerInfo("127.0.0.1", 1111, 1, "state.json", "old")
+        second = ServerInfo("127.0.0.1", 2222, 2, "state.json", "new")
+        send = Mock(side_effect=[OSError("gone"), {"result": {"type": "ok"}}])
+        with (
+            patch("pyherdr.presentation.client.start_background", side_effect=[first, second]) as start,
+            patch("pyherdr.presentation.client.request", send),
+        ):
+            client = ServerClient()
+            client.send_key("pane-1", "enter")
+
+        self.assertEqual(start.call_count, 2)
+        self.assertEqual(send.call_args_list[-1].args[0], second)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
-from ..server import ensure_request
+from ..server import ServerInfo, request, start_background
 
 
 class PaneClient(Protocol):
@@ -124,9 +125,20 @@ class ServerClient:
 
     def __init__(self) -> None:
         self._terminal_metadata: dict[str, dict[str, bool]] = {}
+        self._server_info: ServerInfo | None = None
 
     def _request(self, method: str, **params: Any) -> dict[str, Any]:
-        return ensure_request({"id": "tui", "method": method, "params": params})
+        payload = {"id": "tui", "method": method, "params": params}
+        info = self._server_info
+        if info is None:
+            info = start_background()
+            self._server_info = info
+        try:
+            return request(info, payload)
+        except (OSError, ConnectionError, TimeoutError, json.JSONDecodeError):
+            info = start_background()
+            self._server_info = info
+            return request(info, payload)
 
     def state(self) -> dict[str, Any]:
         response = self._request("state.get")
