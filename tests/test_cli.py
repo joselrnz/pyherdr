@@ -368,6 +368,127 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn('"layout_template_applied"', stdout.getvalue())
 
+    def test_profile_commands_parse(self):
+        args = build_parser().parse_args(["profile", "plan", "ops", "--workflow", "health"])
+
+        self.assertEqual(args.command, "profile")
+        self.assertEqual(args.profile_command, "plan")
+        self.assertEqual(args.name, "ops")
+        self.assertEqual(args.workflow, "health")
+
+    def test_profile_list_prints_inventory_summary(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig, ProfileConfig
+
+        args = build_parser().parse_args(["profile", "list"])
+        config = Config(
+            connections={"prod": ConnectionConfig(host="prod.example.com")},
+            profiles={"ops": ProfileConfig()},
+        )
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.load_config", return_value=config), redirect_stdout(stdout):
+            exit_code = run_profile(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "profile_list")
+        self.assertEqual(payload["connections"], ["prod"])
+        self.assertEqual(payload["profiles"], ["ops"])
+
+    def test_profile_validate_returns_error_for_invalid_inventory(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig
+
+        args = build_parser().parse_args(["profile", "validate"])
+        config = Config(connections={"bad": ConnectionConfig(host="prod.example.com", password="secret")})
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.load_config", return_value=config), redirect_stdout(stdout):
+            exit_code = run_profile(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unsupported password storage", payload["errors"][0])
+
+    def test_profile_plan_prints_generated_commands(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig, ProfileConfig, ProfilePaneConfig
+
+        args = build_parser().parse_args(["profile", "plan", "ops"])
+        config = Config(
+            connections={"prod": ConnectionConfig(host="prod.example.com", user="ops")},
+            profiles={
+                "ops": ProfileConfig(panes=[ProfilePaneConfig(name="prod", connection="prod", command="uptime")])
+            },
+        )
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.load_config", return_value=config), redirect_stdout(stdout):
+            exit_code = run_profile(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "profile_plan")
+        self.assertEqual(payload["panes"][0]["command"], "ssh ops@prod.example.com uptime")
+
+    def test_profile_start_creates_and_starts_profile_panes(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig, ProfileConfig, ProfilePaneConfig
+        from pyherdr.server import ServerInfo
+
+        args = build_parser().parse_args(["profile", "start", "ops"])
+        config = Config(
+            connections={"prod": ConnectionConfig(host="prod.example.com", user="ops")},
+            profiles={
+                "ops": ProfileConfig(
+                    workspace="ops",
+                    cwd="C:/work",
+                    panes=[
+                        ProfilePaneConfig(name="local", command="pwsh"),
+                        ProfilePaneConfig(name="prod", connection="prod", command="uptime"),
+                    ],
+                )
+            },
+        )
+        calls: list[dict] = []
+
+        def fake_request(_info: ServerInfo, payload: dict) -> dict:
+            calls.append(payload)
+            method = payload["method"]
+            if method == "workspace.create":
+                return {"result": {"workspace": {"workspace_id": "ws"}}}
+            if method == "pane.list":
+                return {"result": {"panes": [{"pane_id": "p1"}]}}
+            if method == "pane.rename":
+                return {
+                    "result": {
+                        "pane": {"pane_id": payload["params"]["pane_id"], "title": payload["params"]["title"]}
+                    }
+                }
+            if method == "pane.create":
+                return {"result": {"pane": {"pane_id": "p2", "title": payload["params"]["title"]}}}
+            if method == "pane.start":
+                return {"result": {"pane": {"pane_id": payload["params"]["pane_id"]}, "started": True}}
+            raise AssertionError(method)
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=config),
+            patch("pyherdr.cli.start_background", return_value=ServerInfo("127.0.0.1", 1, 2, "state.json")),
+            patch("pyherdr.cli.request", fake_request),
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_profile(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "profile_start")
+        self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod"])
+        start_commands = [call["params"]["command"] for call in calls if call["method"] == "pane.start"]
+        self.assertEqual(start_commands, ["pwsh", "ssh ops@prod.example.com uptime"])
+
     def test_pane_capture_parses_lines_styled_and_text_flags(self):
         args = build_parser().parse_args(["pane", "capture", "1-1", "--lines", "50", "--styled", "--text"])
 

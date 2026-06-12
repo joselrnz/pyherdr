@@ -79,6 +79,11 @@ class ShellMode(StrEnum):
     NON_LOGIN = "non_login"
 
 
+class ConnectionType(StrEnum):
+    LOCAL = "local"
+    SSH = "ssh"
+
+
 class ImeCursorShape(StrEnum):
     BLOCK = "block"
     STEADY_BLOCK = "steady_block"
@@ -126,6 +131,46 @@ class UpdateConfig(_Section):
 
 class WorktreesConfig(_Section):
     directory: str = ""
+
+
+class ConnectionConfig(_Section):
+    type: ConnectionType = ConnectionType.SSH
+    host: str = ""
+    user: str = ""
+    port: int = 22
+    key: str = ""
+    proxy_jump: str = ""
+    extra_args: list[str] = Field(default_factory=list)
+    # Deliberately parsed so validation can reject raw password storage.
+    password: str = ""
+
+
+class ProfilePaneConfig(_Section):
+    name: str
+    connection: str = ""
+    command: str = ""
+    cwd: str = ""
+    position: str = ""
+    tab: str = ""
+
+
+class ProfileConfig(_Section):
+    workspace: str = ""
+    cwd: str = ""
+    layout: str = ""
+    panes: list[ProfilePaneConfig] = Field(default_factory=list)
+
+
+class WorkflowStepConfig(_Section):
+    pane: str
+    send: str = ""
+    command: str = ""
+    enter: bool = True
+
+
+class WorkflowConfig(_Section):
+    profile: str = ""
+    steps: list[WorkflowStepConfig] = Field(default_factory=list)
 
 
 class WorkspaceConfig(_Section):
@@ -223,3 +268,6 @@ class Config(_Section):
     advanced: AdvancedConfig = AdvancedConfig()
     experimental: ExperimentalConfig = ExperimentalConfig()
     remote: RemoteConfig = RemoteConfig()
+    connections: dict[str, ConnectionConfig] = Field(default_factory=dict)
+    profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
+    workflows: dict[str, WorkflowConfig] = Field(default_factory=dict)

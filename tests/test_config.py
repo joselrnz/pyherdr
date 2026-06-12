@@ -88,6 +88,54 @@ pane_border = "visible"
         self.assertEqual(config.ui.pane_separator, "accent")
         self.assertEqual(config.ui.pane_border, "visible")
 
+    def test_startup_profiles_parse_reusable_connection_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            connections = "\n".join(
+                f"""
+[connections.host{i}]
+type = "ssh"
+host = "host{i}.example.com"
+user = "ops"
+key = "~/.ssh/id_ed25519"
+""".strip()
+                for i in range(1, 101)
+            )
+            config_path.write_text(
+                f"""
+{connections}
+
+[profiles.ops]
+workspace = "ops"
+layout = "main-left"
+
+[[profiles.ops.panes]]
+name = "prod-1"
+connection = "host1"
+command = "uptime"
+
+[[profiles.ops.panes]]
+name = "prod-10"
+connection = "host10"
+command = "journalctl -f"
+
+[workflows.health]
+profile = "ops"
+
+[[workflows.health.steps]]
+pane = "prod-1"
+send = "uptime"
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(len(config.connections), 100)
+        self.assertEqual(config.connections["host10"].host, "host10.example.com")
+        self.assertEqual(config.profiles["ops"].panes[1].connection, "host10")
+        self.assertEqual(config.workflows["health"].steps[0].pane, "prod-1")
+
 
 if __name__ == "__main__":
     unittest.main()

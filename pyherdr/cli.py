@@ -30,6 +30,7 @@ from .server import (
     stop_running,
 )
 from .session import DEFAULT_SESSION, list_session_names, session_runtime_dir
+from .startup_profiles import plan_profile, profile_inventory, validate_startup_config
 from .store import load_state
 from .workspace_recents import load_workspace_recents, prune_workspace_recents
 from .workspace_search import (
@@ -77,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_remote(args)
     if args.command == "plugin":
         return run_plugin(args)
+    if args.command == "profile":
+        return run_profile(args)
     if args.command == "notification":
         return run_notification(args)
     if args.command == "workflow":
@@ -172,6 +175,18 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_sub = plugin.add_subparsers(dest="plugin_command", required=True)
     plugin_validate = plugin_sub.add_parser("validate", help="validate a plugin manifest")
     plugin_validate.add_argument("manifest")
+
+    profile = sub.add_parser("profile", help="startup profile inventory commands")
+    profile_sub = profile.add_subparsers(dest="profile_command", required=True)
+    profile_sub.add_parser("list", help="list configured connections, profiles, and workflows")
+    profile_validate = profile_sub.add_parser("validate", help="validate startup profile configuration")
+    profile_validate.add_argument("name", nargs="?", help="optional profile name to validate")
+    profile_plan = profile_sub.add_parser("plan", help="print generated pane commands for a profile")
+    profile_plan.add_argument("name")
+    profile_plan.add_argument("--workflow", help="include workflow steps for this profile")
+    profile_start = profile_sub.add_parser("start", help="create and start panes from a profile")
+    profile_start.add_argument("name")
+    profile_start.add_argument("--workflow", help="include workflow steps in the startup summary")
 
     notification = sub.add_parser("notification", help="show a notification")
     notification_sub = notification.add_subparsers(dest="notification_command", required=True)
@@ -687,6 +702,119 @@ def run_plugin(args) -> int:
     if args.plugin_command == "validate":
         manifest = load_plugin_manifest(Path(args.manifest))
         print(json.dumps({"type": "plugin_manifest", "manifest": manifest.model_dump()}, indent=2))
+        return 0
+    return 2
+
+
+def run_profile(args) -> int:
+    config = load_config()
+    if args.profile_command == "list":
+        print(json.dumps(profile_inventory(config), indent=2))
+        return 0
+    if args.profile_command == "validate":
+        validation = validate_startup_config(config, profile_name=args.name)
+        payload = {
+            "type": "profile_validation",
+            "profile": args.name,
+            **validation.to_dict(),
+            "counts": {
+                "connections": len(config.connections),
+                "profiles": len(config.profiles),
+                "workflows": len(config.workflows),
+            },
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if validation.ok else 1
+    if args.profile_command == "plan":
+        try:
+            payload = plan_profile(config, args.name, workflow_name=args.workflow)
+        except ValueError as exc:
+            print(json.dumps({"type": "profile_plan", "ok": False, "error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.profile_command == "start":
+        try:
+            plan = plan_profile(config, args.name, workflow_name=args.workflow)
+        except ValueError as exc:
+            print(json.dumps({"type": "profile_start", "ok": False, "error": str(exc)}, indent=2))
+            return 1
+        info = start_background()
+        workspace_label = plan["workspace"] or args.name
+        workspace_response = request(
+            info,
+            {
+                "id": "profile",
+                "method": "workspace.create",
+                "params": {"label": workspace_label, "cwd": plan["cwd"] or str(Path.cwd())},
+            },
+        )
+        if "error" in workspace_response:
+            return print_response(workspace_response)
+        workspace = workspace_response["result"]["workspace"]
+        workspace_id = workspace["workspace_id"]
+        panes_response = request(
+            info,
+            {"id": "profile", "method": "pane.list", "params": {"workspace_id": workspace_id}},
+        )
+        if "error" in panes_response:
+            return print_response(panes_response)
+        existing = panes_response["result"].get("panes", [])
+        first_pane_id = existing[0]["pane_id"] if existing else None
+        started_panes: list[dict[str, Any]] = []
+        for index, pane_plan in enumerate(plan["panes"]):
+            pane_id = first_pane_id if index == 0 and first_pane_id else None
+            if pane_id:
+                rename_response = request(
+                    info,
+                    {
+                        "id": "profile",
+                        "method": "pane.rename",
+                        "params": {"pane_id": pane_id, "title": pane_plan["name"]},
+                    },
+                )
+                if "error" in rename_response:
+                    return print_response(rename_response)
+            else:
+                create_response = request(
+                    info,
+                    {
+                        "id": "profile",
+                        "method": "pane.create",
+                        "params": {"workspace_id": workspace_id, "title": pane_plan["name"]},
+                    },
+                )
+                if "error" in create_response:
+                    return print_response(create_response)
+                pane_id = create_response["result"]["pane"]["pane_id"]
+            start_result = None
+            if pane_plan["command"]:
+                start_response = request(
+                    info,
+                    {
+                        "id": "profile",
+                        "method": "pane.start",
+                        "params": {"pane_id": pane_id, "command": pane_plan["command"]},
+                    },
+                )
+                if "error" in start_response:
+                    return print_response(start_response)
+                start_result = start_response["result"]
+            started_panes.append({**pane_plan, "pane_id": pane_id, "started": start_result is not None})
+        print(
+            json.dumps(
+                {
+                    "type": "profile_start",
+                    "ok": True,
+                    "profile": args.name,
+                    "workspace": workspace,
+                    "layout": plan["layout"],
+                    "panes": started_panes,
+                    "workflow": plan["workflow"],
+                },
+                indent=2,
+            )
+        )
         return 0
     return 2
 
