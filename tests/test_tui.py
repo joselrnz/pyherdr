@@ -1376,10 +1376,59 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertTrue(app._has_working_agent())
             text = app._agents_text().plain
-            self.assertIn("claude · a", text)
-            self.assertIn("main › shell", text)
+            self.assertIn("main · a", text)
+            self.assertIn("working · claude", text)
             # the working agent's glyph is a braille spinner frame, not a static dot
             self.assertTrue(any(frame in text for frame in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"))
+
+    async def test_sidebar_agent_scope_filters_to_current_workspace(self):
+        client = FakeClient()
+        client_state = json.loads(json.dumps(STATE))
+        client_state["workspaces"].append(
+            {
+                "id": "ws2",
+                "label": "docs",
+                "cwd": "C:/docs",
+                "focused_tab_id": "t9",
+                "tabs": [
+                    {
+                        "id": "t9",
+                        "label": "review",
+                        "focused_pane_id": "9-1",
+                        "panes": [
+                            {
+                                "id": "9-1",
+                                "title": "release-notes",
+                                "status": "blocked",
+                                "running": True,
+                                "agent": "codex",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        client.state = lambda: client_state  # type: ignore[method-assign]
+
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+
+            text = app._agents_text().plain
+            self.assertIn("agents", text)
+            self.assertIn("current", text)
+            self.assertIn("main · a", text)
+            self.assertIn("working · claude", text)
+            self.assertNotIn("docs · release-notes", text)
+
+            app._dispatch_activated("toggle_agent_scope", None)
+            await pilot.pause()
+
+            text = app._agents_text().plain
+            self.assertIn("all", text)
+            self.assertIn("main · a", text)
+            self.assertIn("docs · release-notes", text)
+            self.assertIn("blocked · codex", text)
 
     async def test_sidebar_shows_attention_workspace_and_workflow_summaries(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
@@ -1387,14 +1436,14 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             attention = app._attention_text().plain
             self.assertIn("working 1", attention)
-            self.assertIn("agents 1  panes 3", attention)
             row = app._workspace_row_text(1, STATE["workspaces"][0], True).plain
-            self.assertIn("1 ● main", row)
+            self.assertIn("1  ● main", row)
             self.assertIn("2 tabs", row)
             self.assertIn("working 1", row)
-            workflow = app._workflow_text().plain
-            self.assertIn("workflow", workflow)
-            self.assertIn("calls  logs  graph", workflow)
+            footer = app._sidebar_footer_text().plain
+            self.assertIn("+ workspace", footer)
+            self.assertIn("+ terminal", footer)
+            self.assertIn("menu", footer)
 
     async def test_compact_sidebar_preserves_attention_and_workspace_status(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)

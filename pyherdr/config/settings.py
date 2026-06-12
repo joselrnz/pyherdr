@@ -132,9 +132,9 @@ class WorkspaceConfig(_Section):
 
 
 class UiConfig(_Section):
-    sidebar_width: int = 30
+    sidebar_width: int = 38
     sidebar_min_width: int = 18
-    sidebar_max_width: int = 36
+    sidebar_max_width: int = 44
     mobile_width_threshold: int = DEFAULT_MOBILE_WIDTH_THRESHOLD
     mouse_capture: bool = True
     right_click_passthrough_modifier: str = ""
@@ -143,7 +143,7 @@ class UiConfig(_Section):
     confirm_close: bool = True
     prompt_new_tab_name: bool = True
     show_agent_labels_on_pane_borders: bool = False
-    agent_panel_scope: AgentPanelScope = AgentPanelScope.ALL
+    agent_panel_scope: AgentPanelScope = AgentPanelScope.CURRENT
     accent: str = "#f5c2e7"
     toast: ToastConfig = ToastConfig()
     sound: SoundConfig = SoundConfig()
