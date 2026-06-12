@@ -19,6 +19,7 @@ from pyherdr.presentation.tui import (
     RenameScreen,
     ShellPickerScreen,
     ThemeScreen,
+    UrlPickerScreen,
     WorkflowScreen,
     WorktreeScreen,
 )
@@ -2213,7 +2214,7 @@ search_roots = ["{configured.as_posix()}"]
             app._open_pane_menu()
             await pilot.pause()
             self.assertIsInstance(app.screen, ContextMenuScreen)
-            await pilot.click("#ctx-8")  # "close pane" (after split×2, zoom, scroll×2, copy mode, copy, resource)
+            await pilot.click("#ctx-9")
             await pilot.pause()
             await pilot.pause()
             self.assertIn("1-1", client.closed_panes)
@@ -2227,7 +2228,8 @@ search_roots = ["{configured.as_posix()}"]
             app._open_pane_menu()
             await pilot.pause()
             self.assertIsInstance(app.screen, ContextMenuScreen)
-            await pilot.click("#ctx-9")
+            await pilot.click("#ctx-10")
+            await pilot.pause()
             await pilot.pause()
             self.assertIsInstance(app.screen, RenameScreen)
             app.screen.on_input_submitted(self._submit_event("menu-pane"))
@@ -2273,6 +2275,29 @@ search_roots = ["{configured.as_posix()}"]
             await pilot.pause()
             self.assertTrue(copied)
             self.assertIn("SCREEN:1-1", copied[0])
+
+    async def test_open_url_picker_extracts_and_opens_urls(self):
+        class UrlClient(FakeClient):
+            def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
+                self.reads.append((pane_id, lines, styled, cursor))
+                return "dev server at https://localhost:3000/app\nlogs http://127.0.0.1:8000/logs."
+
+        client = UrlClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        opened: list[str] = []
+        app._url_opener = lambda url: opened.append(url) or True
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._pane_id = "1-1"
+            app._run_named_action("open_url")
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, UrlPickerScreen)
+            self.assertEqual(client.reads[-1], ("1-1", 2000, False, False))
+            await pilot.click("#url-1")
+            await pilot.pause()
+
+        self.assertEqual(opened, ["http://127.0.0.1:8000/logs"])
 
     async def test_agent_pane_resumes_its_command(self):
         client = FakeClient()

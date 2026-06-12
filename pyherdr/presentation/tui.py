@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import threading
 import time
+import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,7 @@ from ..config import AgentPanelScope, load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..launchers import LauncherPreset, launcher_presets
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
+from ..url_actions import extract_urls
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents, remove_workspace_recent
 from ..workspace_search import (
@@ -74,6 +76,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "}": "move_workspace_down",
     "x": "close_pane",
     "X": "close_tab",
+    "u": "open_url",
     "T": "rename_tab",
     "P": "rename_pane",
     "N": "new_workspace",
@@ -346,6 +349,7 @@ def _help_text(palette: Palette) -> Text:
     row("m", "pane menu (split/zoom/scroll/close)")
     row("P", "rename pane")
     row("x", "close pane")
+    row("u", "open URL")
     row("[", "copy mode")
     row("pgup/pgdn", "scroll the pane")
     group("tabs")
@@ -1119,6 +1123,84 @@ class CopyModeScreen(ModalScreen[None]):
             if index < len(self._lines) - 1:
                 body.append("\n")
         return body
+
+
+class UrlPickerScreen(ModalScreen[None]):
+    """Pick a URL found in pane output and open it."""
+
+    DEFAULT_CSS = """
+    UrlPickerScreen { align: center middle; background: $ph-base 70%; }
+    #url-box {
+        width: 84;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #url-search { width: 1fr; }
+    #url-list { height: auto; max-height: 14; }
+    .url-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .url-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    #url-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, pane_label: str, urls: list[str], opener: Callable[[str], None]) -> None:
+        super().__init__()
+        self._pane_label = pane_label
+        self._urls = urls
+        self._opener = opener
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="url-box"):
+            yield Input(placeholder="filter URLs...", id="url-search")
+            yield VerticalScroll(id="url-list")
+            yield Static("type to filter · enter/click open · esc close", id="url-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#url-box", Vertical).border_title = f"URLs · {self._pane_label}"
+        self.query_one("#url-search", Input).focus()
+        await self._populate("")
+
+    async def _populate(self, query: str) -> None:
+        listing = self.query_one("#url-list", VerticalScroll)
+        await listing.remove_children()
+        needle = query.strip().lower()
+        rows = [
+            Clickable(url, "url_open", str(index), id=f"url-{index}", classes="url-row")
+            for index, url in enumerate(self._urls)
+            if needle in url.lower()
+        ]
+        if rows:
+            await listing.mount(*rows)
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        await self._populate(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        needle = event.value.strip().lower()
+        for url in self._urls:
+            if needle in url.lower():
+                self._open(url)
+                return
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "url_open" and message.arg is not None:
+            index = int(message.arg)
+            if 0 <= index < len(self._urls):
+                self._open(self._urls[index])
+
+    def _open(self, url: str) -> None:
+        self._opener(url)
+        self.dismiss()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
 
 
 class WorktreeScreen(ModalScreen[None]):
@@ -2746,6 +2828,7 @@ class PyHerdrTui(App):
         self._poll_interval = poll_interval
         self._shells = _available_shells()
         self._launcher_presets = launcher_presets(config, default_shell=_default_shell())
+        self._url_opener: Callable[[str], bool] = webbrowser.open
         self._state: dict = {"workspaces": []}
         self._branches: dict[str, str] = {}
         self._ahead_behind: dict[str, tuple[int, int]] = {}
@@ -3059,6 +3142,8 @@ class PyHerdrTui(App):
             self._open_copy_mode(self._pane_id)
         elif action == "copy_output":
             self._copy_pane_output(self._pane_id)
+        elif action == "open_url":
+            self._open_url_picker(self._pane_id)
         elif action == "resource_monitor":
             self._open_stats("resource monitor · all sessions", None)
         elif action == "workflow_view":
@@ -3141,6 +3226,7 @@ class PyHerdrTui(App):
                         ("zoom", "zoom", None),
                         ("copy mode", "copy_mode", arg),
                         ("copy output", "copy_output", arg),
+                        ("open URL", "open_url", arg),
                         ("resource usage", "pane_stats", arg),
                         ("close", "close_pane", arg),
                         ("rename", "rename_pane", arg),
@@ -3190,6 +3276,8 @@ class PyHerdrTui(App):
             self._copy_pane_output(arg)
         elif action == "copy_mode" and arg:
             self._open_copy_mode(arg)
+        elif action == "open_url" and arg:
+            self._open_url_picker(arg)
         elif action == "pane_stats" and arg:
             self._open_stats(f"resource usage · {self._pane_label_map().get(arg, arg)}", [arg])
         elif action == "workspace_stats" and arg:
@@ -3202,7 +3290,7 @@ class PyHerdrTui(App):
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "worktrees",
             "jump_attention",
-            "copy_mode",
+            "copy_mode", "open_url",
             "rename_pane", "toggle_sidebar", "toggle_agent_scope",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
@@ -3320,6 +3408,7 @@ class PyHerdrTui(App):
         ("Resize mode", "resize"),
         ("Copy mode", "copy_mode"),
         ("Copy pane output", "copy_output"),
+        ("Open URL...", "open_url"),
         ("Close pane", "close_pane"),
         ("Rename pane", "rename_pane"),
         ("Close tab", "close_tab"),
@@ -3374,6 +3463,24 @@ class PyHerdrTui(App):
         lines = text.splitlines() or [""]
         self.push_screen(CopyModeScreen(self._pane_label_map().get(pane_id, pane_id), lines, self._palette))
 
+    def _open_url_picker(self, pane_id: str | None) -> None:
+        """Open a modal picker for URLs in a pane's scrollback."""
+        if not pane_id:
+            return
+        try:
+            text = self._client.pane_read(pane_id, lines=2000)
+        except Exception:
+            return
+        urls = extract_urls(text)
+        if not urls:
+            self.notify("no URLs found in pane output", severity="information", timeout=4)
+            return
+        self.push_screen(UrlPickerScreen(self._pane_label_map().get(pane_id, pane_id), urls, self._open_url))
+
+    def _open_url(self, url: str) -> None:
+        self._url_opener(url)
+        self.notify(f"opened {url}", timeout=3)
+
     def _open_pane_menu(self) -> None:
         """A selectable pop-up of actions for the focused pane (ctrl+b m)."""
         if not self._pane_id:
@@ -3390,6 +3497,7 @@ class PyHerdrTui(App):
                     ("scroll down", "pane_scroll_down", pane_id),
                     ("copy mode", "copy_mode", pane_id),
                     ("copy output", "copy_output", pane_id),
+                    ("open URL", "open_url", pane_id),
                     ("resource usage", "pane_stats", pane_id),
                     ("close pane", "close_pane", pane_id),
                     ("rename", "rename_pane", pane_id),
