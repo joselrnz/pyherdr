@@ -52,6 +52,25 @@ agent = "shell"
         self.assertEqual(config.launchers.presets[0].id, "deploy")
         self.assertEqual(config.launchers.presets[0].command, "ssh deploy@example.com")
 
+    def test_sidebar_width_config_loads_from_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                """
+[ui]
+sidebar_width = 32
+sidebar_min_width = 20
+sidebar_max_width = 50
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.ui.sidebar_width, 32)
+        self.assertEqual(config.ui.sidebar_min_width, 20)
+        self.assertEqual(config.ui.sidebar_max_width, 50)
+
 
 if __name__ == "__main__":
     unittest.main()

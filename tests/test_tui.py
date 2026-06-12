@@ -2,7 +2,9 @@ import json
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
+from pyherdr.config import Config, UiConfig
 from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
@@ -1618,6 +1620,13 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(nav.has_class("compact"))
             self.assertIn("◄", self._widget_text(app, "#sidebar-toggle"))
             self.assertIn("spaces", self._screen_text(app, "#nav"))
+
+    def test_sidebar_width_css_variable_uses_clamped_config(self):
+        config = Config(ui=UiConfig(sidebar_width=80, sidebar_min_width=20, sidebar_max_width=46))
+        with patch("pyherdr.presentation.tui.load_config", return_value=config):
+            app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+
+        self.assertEqual(app.get_css_variables()["ph-sidebar-width"], "46")
 
     async def test_workflow_view_opens_graph_and_log_screen(self):
         event = new_event(

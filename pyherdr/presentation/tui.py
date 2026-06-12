@@ -39,6 +39,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
+from ..clipboard import ClipboardBackend, ClipboardResult, LocalClipboardBackend, TextualClipboardBackend, copy_text
 from ..config import AgentPanelScope, load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
 from ..launchers import LauncherPreset, launcher_presets
@@ -117,6 +118,15 @@ _FOOTER_ACTIONS: tuple[tuple[str, str], ...] = (
     ("↧ detach", "detach"),
     ("✕ quit", "quit"),
 )
+
+
+def _copy_app_text(app: object, text: str) -> ClipboardResult:
+    backends: list[ClipboardBackend] = []
+    copier = getattr(app, "copy_to_clipboard", None)
+    if callable(copier):
+        backends.append(TextualClipboardBackend(copier))
+    backends.append(LocalClipboardBackend())
+    return copy_text(text, backends)
 
 
 def _default_shell() -> str:
@@ -1091,8 +1101,11 @@ class CopyModeScreen(ModalScreen[None]):
     def _copy_selection(self) -> None:
         text = self._selection_text()
         if text:
-            self.app.copy_to_clipboard(text)
-            self.app.notify("copied selection to clipboard", timeout=3)
+            result = _copy_app_text(self.app, text)
+            if result.ok:
+                self.app.notify("copied selection to clipboard", timeout=3)
+            else:
+                self.app.notify(f"clipboard unavailable: {result.error}", severity="warning", timeout=3)
         self.dismiss()
 
     def _refresh_body(self) -> None:
@@ -2333,8 +2346,9 @@ class DirPickerScreen(ModalScreen[None]):
                 return
             target, _from_file = folder
             target = os.path.abspath(target)
-        self.app.copy_to_clipboard(target)
-        self._clear_input_filter(status=f"copied: {self._display_path(target)}")
+        result = _copy_app_text(self.app, target)
+        status = f"copied: {self._display_path(target)}" if result.ok else f"path: {self._display_path(target)}"
+        self._clear_input_filter(status=status)
 
     def on_activated(self, message: Activated) -> None:
         message.stop()
@@ -2657,12 +2671,11 @@ class DirPickerScreen(ModalScreen[None]):
     def _copy_search_path(self, path: str) -> None:
         resolved = os.path.abspath(path)
         display = self._display_path(resolved)
-        try:
-            self.app.copy_to_clipboard(resolved)
-        except Exception:
-            self._command_status = f"path: {display}"
-        else:
+        result = _copy_app_text(self.app, resolved)
+        if result.ok:
             self._command_status = f"copied path: {display}"
+        else:
+            self._command_status = f"path: {display}"
         if self._search_mode:
             self._update_search_footer()
         else:
@@ -2878,7 +2891,7 @@ class PyHerdrTui(App):
     .tabplus:hover { background: $ph-surface0; color: $ph-text; }
     #body { height: 1fr; }
     #nav {
-        width: 40;
+        width: $ph-sidebar-width;
         height: 1fr;
         background: $ph-mantle;
         border: round $ph-overlay0;
@@ -2938,6 +2951,12 @@ class PyHerdrTui(App):
     #statusbar { height: 1; background: $ph-mantle; color: $ph-subtext0; padding: 0 1; }
     """
 
+    def _sidebar_width_columns(self) -> int:
+        minimum = max(12, int(self._config.ui.sidebar_min_width))
+        maximum = max(minimum, int(self._config.ui.sidebar_max_width))
+        requested = int(self._config.ui.sidebar_width)
+        return max(minimum, min(maximum, requested))
+
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
         palette = self._palette
@@ -2953,6 +2972,7 @@ class PyHerdrTui(App):
                 "ph-blue": palette.blue,
                 "ph-red": palette.red,
                 "ph-green": palette.green,
+                "ph-sidebar-width": str(self._sidebar_width_columns()),
             }
         )
         return variables
@@ -4485,8 +4505,11 @@ class PyHerdrTui(App):
             text = self._client.pane_read(pane_id, lines=2000)
         except Exception:
             return
-        self.copy_to_clipboard(text)
-        self.notify("copied pane output to clipboard", timeout=3)
+        result = _copy_app_text(self, text)
+        if result.ok:
+            self.notify("copied pane output to clipboard", timeout=3)
+        else:
+            self.notify(f"clipboard unavailable: {result.error}", severity="warning", timeout=3)
 
     def _tick(self) -> None:
         self._spin += 1
