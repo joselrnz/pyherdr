@@ -1395,6 +1395,16 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app._sidebar_compact)
             self.assertTrue(nav.has_class("compact"))
             self.assertIn("►", self._widget_text(app, "#sidebar-toggle"))
+            compact_nav = self._screen_text(app, "#nav")
+            self.assertNotIn("attention", compact_nav)
+            self.assertNotIn("agents", compact_nav)
+            self.assertNotIn("spaces", compact_nav)
+
+            app._tick()
+            await pilot.pause()
+            compact_nav = self._screen_text(app, "#nav")
+            self.assertNotIn("agents", compact_nav)
+            self.assertIn(self._widget_text(app, "#compact-agents"), compact_nav)
 
             await pilot.press("ctrl+b")
             await pilot.press("b")
@@ -1402,6 +1412,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertFalse(app._sidebar_compact)
             self.assertFalse(nav.has_class("compact"))
+            self.assertIn("◄", self._widget_text(app, "#sidebar-toggle"))
             self.assertIn("spaces", self._screen_text(app, "#nav"))
 
     async def test_workflow_view_opens_graph_and_log_screen(self):

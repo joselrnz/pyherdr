@@ -2596,7 +2596,7 @@ class PyHerdrTui(App):
         padding: 0 1;
     }
     #nav.compact {
-        width: 4;
+        width: 6;
         padding: 0 0;
     }
     .attention { width: 1fr; padding: 0 0 1 0; }
@@ -2606,7 +2606,9 @@ class PyHerdrTui(App):
     .wscompact { width: 1fr; height: 1; content-align: center middle; }
     .wscompact:hover { background: $ph-surface0; }
     .wscompact.active { background: $ph-surface0; }
-    .navtoggle { width: 1fr; height: 1; content-align: center middle; color: $ph-accent; }
+    .navhead { width: 1fr; height: 1; }
+    .navtitle { width: 1fr; height: 1; color: $ph-subtext0; }
+    .navtoggle { width: 3; height: 1; content-align: center middle; color: $ph-accent; }
     .navtoggle:hover { background: $ph-surface0; }
     .compact-attention { width: 1fr; padding: 1 0; content-align: center middle; }
     .compact-agents { width: 1fr; padding: 1 0 0 0; content-align: center middle; }
@@ -3656,8 +3658,12 @@ class PyHerdrTui(App):
         if self._sidebar_compact:
             await nav.mount(*self._compact_sidebar_widgets())
             return
-        widgets: list[Static] = [
-            Clickable("◄", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
+        widgets: list[Widget] = [
+            Horizontal(
+                Static("pyherdr", classes="navtitle"),
+                Clickable("◄", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
+                classes="navhead",
+            ),
             Static(self._attention_text(), id="attention", classes="attention"),
             Static(Text("spaces", style=self._palette.subtext0), classes="navtop"),
         ]
@@ -3681,8 +3687,8 @@ class PyHerdrTui(App):
         widgets.append(Static(self._agents_text(), id="agents", classes="agents"))
         await nav.mount(*widgets)
 
-    def _compact_sidebar_widgets(self) -> list[Static]:
-        widgets: list[Static] = [
+    def _compact_sidebar_widgets(self) -> list[Widget]:
+        widgets: list[Widget] = [
             Clickable("►", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
             Static(self._compact_attention_text(), id="attention", classes="compact-attention"),
         ]
@@ -3699,7 +3705,7 @@ class PyHerdrTui(App):
                     classes="wscompact active" if active else "wscompact",
                 )
             )
-        widgets.append(Static(self._compact_agents_text(), id="agents", classes="compact-agents"))
+        widgets.append(Static(self._compact_agents_text(), id="compact-agents", classes="compact-agents"))
         return widgets
 
     @staticmethod
@@ -3974,10 +3980,7 @@ class PyHerdrTui(App):
         self._spin += 1
         # Animate the working spinner without a full sidebar rebuild.
         if self._has_working_agent():
-            try:
-                self.query_one("#agents", Static).update(self._agents_text())
-            except Exception:
-                pass
+            self._refresh_agent_panel()
         self.run_worker(self._poll_state(), group="poll", exclusive=True)
 
     async def _terminal_refresh_loop(self) -> None:
@@ -4018,8 +4021,14 @@ class PyHerdrTui(App):
         except Exception:
             return
         self._emit_agent_toasts()
+        self._refresh_agent_panel()
+
+    def _refresh_agent_panel(self) -> None:
         try:
-            self.query_one("#agents", Static).update(self._agents_text())
+            if self._sidebar_compact:
+                self.query_one("#compact-agents", Static).update(self._compact_agents_text())
+            else:
+                self.query_one("#agents", Static).update(self._agents_text())
         except Exception:
             pass
 
