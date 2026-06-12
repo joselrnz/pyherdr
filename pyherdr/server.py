@@ -434,9 +434,27 @@ def mutates_state(method: str) -> bool:
 
 def skips_state_lock(method: str) -> bool:
     """Return whether a live-terminal request can run without the state lock."""
-    return method in {"pane.wait_output"}
+    return method in {
+        "pane.read",
+        "pane.wait_output",
+        "pane.send_text",
+        "pane.send_key",
+        "pane.resize",
+        "pane.scroll",
+        "stats.get",
+    }
 
 
 def quiet_request(method: str) -> bool:
-    """Suppress high-frequency internal long-poll traffic from workflow logs."""
-    return method in {"pane.wait_output"}
+    """Suppress high-frequency internal terminal traffic from workflow logs."""
+    return method in {
+        "ping",
+        "state.get",
+        "stats.get",
+        "pane.read",
+        "pane.wait_output",
+        "pane.send_text",
+        "pane.send_key",
+        "pane.resize",
+        "pane.scroll",
+    }
