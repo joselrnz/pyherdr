@@ -2579,10 +2579,16 @@ class PyHerdrTui(App):
         height: 1;
         background: $ph-mantle;
         color: $ph-subtext0;
+    }
+    #tabstrip {
+        width: 1fr;
+        height: 1;
         overflow-x: auto;
         overflow-y: hidden;
         scrollbar-size: 0 0;
     }
+    .tabscroll { width: 3; content-align: center middle; color: $ph-overlay0; }
+    .tabscroll:hover { background: $ph-surface0; color: $ph-accent; text-style: bold; }
     .wsname { width: auto; padding: 0 1; color: $ph-accent; text-style: bold; }
     .tabcell { width: auto; padding: 0 1; color: $ph-subtext0; }
     .tabcell:hover { background: $ph-surface0; color: $ph-text; }
@@ -2667,7 +2673,7 @@ class PyHerdrTui(App):
         return variables
 
     def compose(self) -> ComposeResult:
-        yield HorizontalScroll(id="tabbar")
+        yield Horizontal(id="tabbar")
         with Horizontal(id="body"):
             yield Vertical(id="nav")
             yield Horizontal(id="panes")
@@ -2871,6 +2877,10 @@ class PyHerdrTui(App):
             self._tab_id = arg
             self._pane_id = None
             self.run_worker(self.reload(), exclusive=True)
+        elif action == "tab_scroll_left":
+            self._scroll_tabbar(-1)
+        elif action == "tab_scroll_right":
+            self._scroll_tabbar(1)
         elif action == "switch_workspace" and arg:
             self._focus_workspace_on_server(arg)
             self._workspace_id = arg
@@ -2971,6 +2981,14 @@ class PyHerdrTui(App):
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
             self._run_named_action(action)
+
+    def _scroll_tabbar(self, direction: int) -> None:
+        try:
+            strip = self.query_one("#tabstrip", HorizontalScroll)
+        except Exception:
+            return
+        step = max(8, int(strip.size.width * 0.75) if strip.size.width else 12)
+        strip.scroll_relative(x=direction * step, animate=False, force=True, immediate=True)
 
     def _navigator_rows(self) -> list[tuple[str, Text, str]]:
         rows: list[tuple[str, Text, str]] = []
@@ -3668,8 +3686,9 @@ class PyHerdrTui(App):
             view.set_class(view.pane_id == self._pane_id, "active")
 
     async def _refresh_tabbar(self) -> None:
-        bar = self.query_one("#tabbar", HorizontalScroll)
+        bar = self.query_one("#tabbar", Horizontal)
         await bar.remove_children()
+        strip = HorizontalScroll(id="tabstrip")
         widgets: list[Static] = []
         workspace = self._focused_workspace()
         if workspace:
@@ -3697,8 +3716,13 @@ class PyHerdrTui(App):
             )
             if len(tabs) > 1:  # never offer to close the last tab
                 widgets.append(Clickable("✕ ", "close_tab", tab_id, id=f"tabclose-{tab_id}", classes="tabclose"))
-        widgets.append(Clickable(" + ", "new_tab", id="tabplus", classes="tabplus"))
-        await bar.mount(*widgets)
+        await bar.mount(
+            Clickable("‹", "tab_scroll_left", id="tabscroll-left", classes="tabscroll"),
+            strip,
+            Clickable("›", "tab_scroll_right", id="tabscroll-right", classes="tabscroll"),
+            Clickable(" + ", "new_tab", id="tabplus", classes="tabplus"),
+        )
+        await strip.mount(*widgets)
         # When tabs overflow the width, keep the active one (and the +) in view.
         active_cell = next((w for w in widgets if getattr(w, "id", "") == f"tabcell-{self._tab_id}"), None)
         if active_cell is not None:

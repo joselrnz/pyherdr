@@ -2108,6 +2108,42 @@ search_roots = ["{configured.as_posix()}"]
             await pilot.pause()
             self.assertIn("t1", client.closed_tabs)
 
+    async def test_tab_bar_overflow_controls_scroll_inner_strip(self):
+        state = json.loads(json.dumps(STATE))
+        tabs = []
+        for index in range(12):
+            tab_id = f"tab-{index}"
+            pane_id = f"pane-{index}"
+            tabs.append(
+                {
+                    "id": tab_id,
+                    "label": f"long-tab-name-{index:02d}",
+                    "focused_pane_id": pane_id,
+                    "panes": [{"id": pane_id, "title": f"p{index}", "status": "idle", "running": True}],
+                }
+            )
+        workspace = state["workspaces"][0]
+        workspace["tabs"] = tabs
+        workspace["focused_tab_id"] = "tab-0"
+        client = FakeClient()
+        client.state = lambda: state  # type: ignore[method-assign]
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(60, 24)) as pilot:
+            await pilot.pause()
+            strip = app.query_one("#tabstrip")
+            self.assertIsNotNone(app.query_one("#tabscroll-left"))
+            self.assertIsNotNone(app.query_one("#tabscroll-right"))
+            self.assertIsNotNone(app.query_one("#tabplus"))
+
+            before = strip.scroll_x
+            await pilot.click("#tabscroll-right")
+            await pilot.pause()
+            self.assertGreater(strip.scroll_x, before)
+
+            await pilot.click("#tabscroll-left")
+            await pilot.pause()
+            self.assertLessEqual(strip.scroll_x, before + 1)
+
     async def test_shell_dropdown_creates_tab_with_chosen_shell(self):
         client = FakeClient()
         app = PyHerdrTui(client=client, poll_interval=100)
