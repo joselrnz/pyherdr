@@ -119,12 +119,15 @@ class FakeClient:
 
     def send_text(self, pane_id: str, text: str) -> None:
         self.sent_text.append((pane_id, text))
+        self.events.append(("send_text", pane_id))
 
     def send_key(self, pane_id: str, key: str) -> None:
         self.sent_key.append((pane_id, key))
+        self.events.append(("send_key", pane_id))
 
     def pane_scroll(self, pane_id: str, direction: str) -> None:
         self.scrolled.append((pane_id, direction))
+        self.events.append(("scroll", f"{pane_id}:{direction}"))
 
     def create_tab(self, label: str = "shell") -> dict:
         self.tabs += 1
@@ -260,6 +263,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             client.reads.clear()
             client.resizes.clear()
             client.events.clear()
+            app._terminal_sizes.clear()
 
             app._update_pane_contents()
             await pilot.pause()
@@ -2167,6 +2171,22 @@ search_roots = ["{configured.as_posix()}"]
                 if ("1-1", "a") in client.sent_text:
                     break
             self.assertIn(("1-1", "a"), client.sent_text)
+
+    async def test_typing_pins_active_pane_to_bottom_before_forwarding_text(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            client.events.clear()
+            await pilot.press("a")
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if ("1-1", "a") in client.sent_text:
+                    break
+
+            self.assertIn(("1-1", "bottom"), client.scrolled)
+            self.assertIn(("send_text", "1-1"), client.events)
+            self.assertLess(client.events.index(("scroll", "1-1:bottom")), client.events.index(("send_text", "1-1")))
 
     async def test_terminal_input_does_not_block_key_handler(self):
         started = threading.Event()

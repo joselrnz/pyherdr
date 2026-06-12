@@ -2751,6 +2751,7 @@ class PyHerdrTui(App):
                 pending = None
             kind, pane_id, payload = item
             try:
+                self._pin_pane_to_bottom(pane_id)
                 if kind == "text":
                     payload, pending = self._coalesced_terminal_text(pane_id, payload)
                     self._client.send_text(pane_id, payload)
@@ -2760,6 +2761,12 @@ class PyHerdrTui(App):
                 pass
             finally:
                 self._terminal_input.task_done()
+
+    def _pin_pane_to_bottom(self, pane_id: str) -> None:
+        try:
+            self._client.pane_scroll(pane_id, "bottom")
+        except Exception:
+            pass
 
     def _coalesced_terminal_text(
         self, pane_id: str, text: str
@@ -2885,6 +2892,8 @@ class PyHerdrTui(App):
         if action == "focus_pane" and arg:
             self._pane_id = arg
             self._mark_active_pane()
+            self._pin_pane_to_bottom(arg)
+            self._update_pane_contents({arg})
             self._refresh_statusbar()
         elif action == "switch_tab" and arg:
             self._focus_tab_on_server(arg)
@@ -2925,6 +2934,8 @@ class PyHerdrTui(App):
         elif action == "ctx_pane" and arg:
             self._pane_id = arg
             self._mark_active_pane()
+            self._pin_pane_to_bottom(arg)
+            self._update_pane_contents({arg})
             self.push_screen(
                 ContextMenuScreen(
                     "pane",
@@ -3653,6 +3664,7 @@ class PyHerdrTui(App):
             await container.mount(self._pane_view(self._pane_id, panes))
             self._mark_active_pane()
             self._update_pane_contents()
+            self.call_after_refresh(self._update_pane_contents)
             return
         tab = self._focused_tab() or {}
         widget = self._layout_widget(tab.get("layout") or {}, panes)
@@ -3662,6 +3674,7 @@ class PyHerdrTui(App):
             await container.mount(*[self._pane_view(pid, panes) for pid in panes])
         self._mark_active_pane()
         self._update_pane_contents()
+        self.call_after_refresh(self._update_pane_contents)
 
     def _pane_view(self, pane_id: str, panes: dict[str, dict]) -> PaneView:
         pane = panes.get(pane_id, {})
