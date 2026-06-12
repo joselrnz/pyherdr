@@ -127,6 +127,30 @@ class PaneClient(Protocol):
         """Preview or send text to panes selected by fan-out target selectors."""
         ...
 
+    def worktree_list(self, cwd: str | None = None) -> list[dict[str, Any]]:
+        """List git worktrees for the current/focused workspace."""
+        ...
+
+    def worktree_create(
+        self,
+        branch: str,
+        *,
+        base: str | None = None,
+        path: str | None = None,
+        label: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a git worktree and open it as a workspace."""
+        ...
+
+    def worktree_open(self, path: str, label: str | None = None) -> dict[str, Any]:
+        """Open an existing worktree path as a workspace."""
+        ...
+
+    def worktree_remove(self, path: str, *, force: bool = False) -> dict[str, Any]:
+        """Remove a git worktree without deleting the branch."""
+        ...
+
 
 class ServerClient:
     """`PaneClient` backed by the PyHerdr server over the local socket."""
@@ -254,4 +278,28 @@ class ServerClient:
             dry_run=dry_run,
             confirm_risky=confirm_risky,
         )
+        return response.get("result", {})
+
+    def worktree_list(self, cwd: str | None = None) -> list[dict[str, Any]]:
+        response = self._request("worktree.list", cwd=cwd)
+        return list(response.get("result", {}).get("worktrees", []))
+
+    def worktree_create(
+        self,
+        branch: str,
+        *,
+        base: str | None = None,
+        path: str | None = None,
+        label: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        response = self._request("worktree.create", branch=branch, base=base, path=path, label=label, cwd=cwd)
+        return response.get("result", {})
+
+    def worktree_open(self, path: str, label: str | None = None) -> dict[str, Any]:
+        response = self._request("worktree.open", path=path, label=label)
+        return response.get("result", {})
+
+    def worktree_remove(self, path: str, *, force: bool = False) -> dict[str, Any]:
+        response = self._request("worktree.remove", path=path, force=force)
         return response.get("result", {})

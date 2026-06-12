@@ -19,6 +19,7 @@ from pyherdr.presentation.tui import (
     ShellPickerScreen,
     ThemeScreen,
     WorkflowScreen,
+    WorktreeScreen,
 )
 from pyherdr.workflow import new_event
 from pyherdr.workspace_recents import load_workspace_recents, record_workspace_recent
@@ -88,6 +89,9 @@ class FakeClient:
         self.renamed_workspaces: list[tuple[str, str]] = []
         self.closed_workspaces: list[str] = []
         self.fanouts: list[dict] = []
+        self.opened_worktrees: list[tuple[str, str | None]] = []
+        self.created_worktrees: list[dict] = []
+        self.removed_worktrees: list[tuple[str, bool]] = []
         self.reads: list[tuple[str, int, bool, bool]] = []
         self.resizes: list[tuple[str, int, int]] = []
         self.events: list[tuple[str, str]] = []
@@ -246,6 +250,33 @@ class FakeClient:
             "sent": 0 if dry_run else len(pane_ids),
             "bytes": len((text + ("\n" if enter else "")).encode("utf-8")),
         }
+
+    def worktree_list(self, cwd: str | None = None) -> list[dict]:
+        return [
+            {"path": "C:/repo/pyherdr", "branch": "main", "head": "abc1234"},
+            {"path": "C:/repo/pyherdr-sidebar", "branch": "feature/sidebar", "head": "def5678"},
+        ]
+
+    def worktree_create(
+        self,
+        branch: str,
+        *,
+        base: str | None = None,
+        path: str | None = None,
+        label: str | None = None,
+        cwd: str | None = None,
+    ) -> dict:
+        payload = {"branch": branch, "base": base, "path": path, "label": label, "cwd": cwd}
+        self.created_worktrees.append(payload)
+        return {"type": "worktree_created", "path": path or f"C:/repo/{branch.replace('/', '-')}"}
+
+    def worktree_open(self, path: str, label: str | None = None) -> dict:
+        self.opened_worktrees.append((path, label))
+        return {"type": "worktree_opened", "path": path}
+
+    def worktree_remove(self, path: str, *, force: bool = False) -> dict:
+        self.removed_worktrees.append((path, force))
+        return {"type": "worktree_removed", "path": path}
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
@@ -1564,6 +1595,44 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Mermaid source", body)
             self.assertIn("flowchart TD", body)
             self.assertIn("WS-121", body)
+
+    async def test_worktree_screen_opens_removes_and_creates_worktrees(self):
+        client = FakeClient()
+        refreshed: list[bool] = []
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test() as pilot:
+            app.push_screen(WorktreeScreen(client, refreshed.append))
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, WorktreeScreen)
+            await pilot.click("#wt-open-1")
+            await pilot.pause()
+            self.assertEqual(client.opened_worktrees, [("C:/repo/pyherdr-sidebar", "feature/sidebar")])
+            self.assertTrue(refreshed)
+
+            app.push_screen(WorktreeScreen(client, refreshed.append))
+            await pilot.pause()
+            await pilot.click("#wt-remove-1")
+            await pilot.pause()
+            self.assertEqual(client.removed_worktrees, [("C:/repo/pyherdr-sidebar", False)])
+
+            app.push_screen(WorktreeScreen(client, refreshed.append))
+            await pilot.pause()
+            await pilot.click("#wt-branch")
+            await pilot.press(*"feature/new")
+            await pilot.click("#wt-create")
+            await pilot.pause()
+
+        self.assertEqual(client.created_worktrees[-1]["branch"], "feature/new")
+
+    async def test_worktree_action_opens_worktree_manager(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._run_named_action("worktrees")
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, WorktreeScreen)
 
     def test_workflow_terminal_graph_centers_arrows_and_marks_cycles(self):
         request = new_event(

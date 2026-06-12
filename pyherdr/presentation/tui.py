@@ -76,6 +76,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "T": "rename_tab",
     "P": "rename_pane",
     "N": "new_workspace",
+    "W": "worktrees",
     "F": "fanout",
     "b": "toggle_sidebar",
     "w": "next_workspace",
@@ -354,6 +355,7 @@ def _help_text(palette: Palette) -> Text:
     row("X", "close tab (or click ✕)")
     group("workspaces")
     row("N", "new workspace (folder picker)")
+    row("W", "worktrees")
     row("w", "next workspace")
     row("{ / }", "move workspace up / down")
     group("global")
@@ -1114,6 +1116,168 @@ class CopyModeScreen(ModalScreen[None]):
             if index < len(self._lines) - 1:
                 body.append("\n")
         return body
+
+
+class WorktreeScreen(ModalScreen[None]):
+    """Manage git worktrees without leaving the TUI."""
+
+    DEFAULT_CSS = """
+    WorktreeScreen { align: center middle; background: $ph-base 70%; }
+    #wt-box {
+        width: 82;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #wt-create-row { height: 3; }
+    #wt-branch { width: 1fr; }
+    #wt-create {
+        width: 16;
+        height: 3;
+        background: $ph-surface0;
+        color: $ph-green;
+        content-align: center middle;
+        text-style: bold;
+        margin: 0 0 0 1;
+    }
+    #wt-create:hover { background: $ph-green; color: $ph-base; }
+    #wt-list { height: auto; max-height: 15; border: round $ph-surface0; background: $ph-base; }
+    .wt-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .wt-row:hover { background: $ph-surface0; }
+    .wt-remove { width: 1fr; color: $ph-red; padding: 0 1; }
+    .wt-remove:hover { background: $ph-red; color: $ph-base; }
+    #wt-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, client: PaneClient, on_changed: Callable[[bool], None] | None = None) -> None:
+        super().__init__()
+        self._client = client
+        self._on_changed = on_changed
+        self._worktrees: list[dict[str, Any]] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="wt-box"):
+            with Horizontal(id="wt-create-row"):
+                yield Input(placeholder="new worktree branch, e.g. feature/sidebar", id="wt-branch")
+                yield Clickable("+ worktree", "wt_create", id="wt-create")
+            yield VerticalScroll(id="wt-list")
+            yield Static("click a row to open · remove only removes the worktree checkout · esc close", id="wt-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#wt-box", Vertical).border_title = "worktrees"
+        self.query_one("#wt-branch", Input).focus()
+        await self._refresh()
+
+    async def _refresh(self) -> None:
+        listing = self.query_one("#wt-list", VerticalScroll)
+        await listing.remove_children()
+        try:
+            self._worktrees = self._client.worktree_list()
+        except Exception as exc:
+            self._worktrees = []
+            await listing.mount(Static(f"could not list worktrees: {exc}", classes="wt-row"))
+            return
+        if not self._worktrees:
+            await listing.mount(Static("no git worktrees found for the current workspace", classes="wt-row"))
+            return
+        rows: list[Widget] = []
+        for index, item in enumerate(self._worktrees):
+            rows.append(
+                Clickable(
+                    self._worktree_text(item),
+                    "wt_open",
+                    str(index),
+                    id=f"wt-open-{index}",
+                    classes="wt-row",
+                )
+            )
+            rows.append(
+                Clickable(
+                    f"  remove checkout  {item.get('path', '')}",
+                    "wt_remove",
+                    str(index),
+                    id=f"wt-remove-{index}",
+                    classes="wt-remove",
+                )
+            )
+        await listing.mount(*rows)
+
+    @staticmethod
+    def _worktree_text(item: dict[str, Any]) -> Text:
+        text = Text()
+        branch = str(item.get("branch") or "detached")
+        path = str(item.get("path") or "")
+        head = str(item.get("head") or "")[:8]
+        text.append("open  ", style="#89b4fa")
+        text.append(branch, style="bold")
+        if head:
+            text.append(f"  {head}", style="#6c7086")
+        text.append(f"\n      {path}", style="#a6adc8")
+        return text
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action == "wt_create":
+            self._create()
+        elif message.action in ("wt_open", "wt_remove") and message.arg is not None:
+            index = int(message.arg)
+            if 0 <= index < len(self._worktrees):
+                if message.action == "wt_open":
+                    self._open(self._worktrees[index])
+                else:
+                    self._remove(self._worktrees[index])
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._create()
+
+    def _create(self) -> None:
+        branch = self.query_one("#wt-branch", Input).value.strip()
+        if not branch:
+            self.query_one("#wt-foot", Static).update("enter a branch name first")
+            return
+        try:
+            self._client.worktree_create(branch, label=branch)
+        except Exception as exc:
+            self.query_one("#wt-foot", Static).update(f"create failed: {exc}")
+            return
+        self._changed_and_close()
+
+    def _open(self, item: dict[str, Any]) -> None:
+        path = str(item.get("path") or "")
+        if not path:
+            return
+        branch = str(item.get("branch") or Path(path).name)
+        try:
+            self._client.worktree_open(path, label=branch)
+        except Exception as exc:
+            self.query_one("#wt-foot", Static).update(f"open failed: {exc}")
+            return
+        self._changed_and_close()
+
+    def _remove(self, item: dict[str, Any]) -> None:
+        path = str(item.get("path") or "")
+        if not path:
+            return
+        try:
+            self._client.worktree_remove(path, force=False)
+        except Exception as exc:
+            self.query_one("#wt-foot", Static).update(f"remove failed: {exc}")
+            return
+        self._changed_and_close()
+
+    def _changed_and_close(self) -> None:
+        self.dismiss()
+        if self._on_changed is not None:
+            self.app.call_after_refresh(self._on_changed, True)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
 
 
 class CommandPaletteScreen(ModalScreen[None]):
@@ -2807,6 +2971,8 @@ class PyHerdrTui(App):
             self.run_worker(self._split("vertical"), exclusive=True)
         elif action == "new_workspace":
             self._open_new_workspace()
+        elif action == "worktrees":
+            self._open_worktrees()
         elif action == "close_pane" and self._pane_id:
             self._client.close_pane(self._pane_id)
             self._pane_id = None
@@ -3004,7 +3170,8 @@ class PyHerdrTui(App):
             self._open_workflow_view()
         elif action in (
             "help", "palette", "settings", "detach", "quit",
-            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "copy_mode",
+            "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "worktrees",
+            "copy_mode",
             "rename_pane", "toggle_sidebar", "toggle_agent_scope",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
@@ -3131,6 +3298,7 @@ class PyHerdrTui(App):
         ("Next tab", "next_tab"),
         ("Previous tab", "prev_tab"),
         ("New workspace…", "new_workspace"),
+        ("Worktrees…", "worktrees"),
         ("Move workspace up", "move_workspace_up"),
         ("Move workspace down", "move_workspace_down"),
         ("New terminal (pick shell)…", "open_shell_picker"),
@@ -3242,6 +3410,16 @@ class PyHerdrTui(App):
                 search_metadata_cache_path=default_workspace_search_cache_path(),
             )
         )
+
+    def _open_worktrees(self) -> None:
+        """Open the worktree manager modal."""
+        self.push_screen(WorktreeScreen(self._client, self._worktree_changed))
+
+    def _worktree_changed(self, _changed: bool = True) -> None:
+        self._workspace_id = None
+        self._tab_id = None
+        self._pane_id = None
+        self.run_worker(self.reload(), exclusive=True)
 
     def _workspace_picker_start(self) -> str:
         workspace = self._focused_workspace()

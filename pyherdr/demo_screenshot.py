@@ -357,6 +357,29 @@ class DemoScreenshotClient:
             "bytes": len((text + ("\n" if enter else "")).encode("utf-8")),
         }
 
+    def worktree_list(self, cwd: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {"path": "C:/Users/josel/github/pyherdr", "branch": "main", "head": "abc1234"},
+            {"path": "C:/Users/josel/github/pyherdr-sidebar", "branch": "feature/sidebar", "head": "def5678"},
+        ]
+
+    def worktree_create(
+        self,
+        branch: str,
+        *,
+        base: str | None = None,
+        path: str | None = None,
+        label: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        return {"type": "worktree_created", "path": path or f"C:/Users/josel/github/{branch.replace('/', '-')}"}
+
+    def worktree_open(self, path: str, label: str | None = None) -> dict[str, Any]:
+        return {"type": "worktree_opened", "path": path}
+
+    def worktree_remove(self, path: str, *, force: bool = False) -> dict[str, Any]:
+        return {"type": "worktree_removed", "path": path}
+
 
 async def _open_workspace_search_demo(app: PyHerdrTui, pilot: Any, view: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
