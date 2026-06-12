@@ -1,3 +1,4 @@
+import json
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -360,6 +361,148 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stdout.getvalue().strip(), "raw line one\nraw line two")
         self.assertNotIn("pane_capture", stdout.getvalue())
+
+    def test_headless_init_parses_workspace_pane_and_command(self):
+        args = build_parser().parse_args(
+            [
+                "headless",
+                "init",
+                "--workspace-label",
+                "ci",
+                "--cwd",
+                "C:/repo",
+                "--pane-title",
+                "runner",
+                "--",
+                "python",
+                "-m",
+                "pytest",
+            ]
+        )
+
+        self.assertEqual(args.command, "headless")
+        self.assertEqual(args.headless_command, "init")
+        self.assertEqual(args.workspace_label, "ci")
+        self.assertEqual(args.cwd, "C:/repo")
+        self.assertEqual(args.pane_title, "runner")
+        self.assertEqual(args.command_parts, ["--", "python", "-m", "pytest"])
+
+    def test_headless_init_creates_workspace_pane_and_starts_command(self):
+        from pyherdr.cli import run_headless
+        from pyherdr.server import ServerInfo
+
+        info = ServerInfo("127.0.0.1", 4567, 123, "state.json", "secret-token")
+        responses = [
+            {
+                "id": "headless",
+                "result": {
+                    "type": "workspace_created",
+                    "workspace": {
+                        "workspace_id": "ws_1",
+                        "label": "ci",
+                        "cwd": "C:/repo",
+                        "status": "idle",
+                        "focused_tab_id": "tab_1",
+                    },
+                },
+            },
+            {
+                "id": "headless",
+                "result": {
+                    "type": "pane_list",
+                    "panes": [
+                        {
+                            "pane_id": "1-1",
+                            "workspace_id": "ws_1",
+                            "tab_id": "tab_1",
+                            "title": "pane",
+                            "cwd": "C:/repo",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "headless",
+                "result": {
+                    "type": "pane_renamed",
+                    "pane": {
+                        "pane_id": "1-1",
+                        "workspace_id": "ws_1",
+                        "tab_id": "tab_1",
+                        "title": "runner",
+                        "cwd": "C:/repo",
+                    },
+                },
+            },
+            {
+                "id": "headless",
+                "result": {
+                    "type": "pane_start",
+                    "started": True,
+                    "pane": {
+                        "pane_id": "1-1",
+                        "workspace_id": "ws_1",
+                        "tab_id": "tab_1",
+                        "title": "runner",
+                        "cwd": "C:/repo",
+                        "command": "python -m pytest",
+                    },
+                },
+            },
+        ]
+        args = build_parser().parse_args(
+            [
+                "headless",
+                "init",
+                "--workspace-label",
+                "ci",
+                "--cwd",
+                "C:/repo",
+                "--pane-title",
+                "runner",
+                "--",
+                "python",
+                "-m",
+                "pytest",
+            ]
+        )
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.start_background", return_value=info),
+            patch("pyherdr.cli.request", side_effect=responses) as send,
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_headless(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "headless_init")
+        self.assertEqual(payload["workspace"]["workspace_id"], "ws_1")
+        self.assertEqual(payload["pane"]["title"], "runner")
+        self.assertEqual(payload["started"]["started"], True)
+        self.assertNotIn("secret-token", stdout.getvalue())
+        self.assertEqual(
+            [call.args[1]["method"] for call in send.call_args_list],
+            ["workspace.create", "pane.list", "pane.rename", "pane.start"],
+        )
+
+    def test_headless_start_prints_redacted_server_info(self):
+        from pyherdr.cli import run_headless
+        from pyherdr.server import ServerInfo
+
+        info = ServerInfo("127.0.0.1", 4567, 123, "state.json", "secret-token")
+        args = build_parser().parse_args(["headless", "start"])
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.start_background", return_value=info), redirect_stdout(stdout):
+            exit_code = run_headless(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "headless_server")
+        self.assertEqual(payload["port"], 4567)
+        self.assertNotIn("secret-token", stdout.getvalue())
 
     def test_session_record_parses_output_lines_and_styled_flags(self):
         args = build_parser().parse_args(["session", "record", "--output", "rec.json", "--lines", "50", "--styled"])

@@ -83,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_workflow(args)
     if args.command == "schedule":
         return run_schedule(args)
+    if args.command == "headless":
+        return run_headless(args)
     if args.command == "server":
         return run_server(args)
     if args.command == "api":
@@ -217,6 +219,20 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_remove.add_argument("id")
     schedule_run = schedule_sub.add_parser("run")
     schedule_run.add_argument("id")
+
+    headless = sub.add_parser("headless", help="headless automation commands")
+    headless_sub = headless.add_subparsers(dest="headless_command", required=True)
+    headless_sub.add_parser("start", help="start the background server without launching the TUI")
+    headless_sub.add_parser("status", help="print headless server/session status")
+    headless_init = headless_sub.add_parser("init", help="start server and create a workspace plus first pane")
+    headless_init.add_argument("--workspace-label", default="headless")
+    headless_init.add_argument("--cwd", default=str(Path.cwd()))
+    headless_init.add_argument("--pane-title", default="pane")
+    headless_init.add_argument(
+        "command_parts",
+        nargs=argparse.REMAINDER,
+        help="optional pane command to start; prefix with -- when needed",
+    )
 
     server = sub.add_parser("server", help="Python server process commands")
     server_sub = server.add_subparsers(dest="server_command", required=True)
@@ -693,6 +709,121 @@ def run_server(args) -> int:
         )
         return 0
     return 2
+
+
+def run_headless(args) -> int:
+    """Headless entrypoints for automation that should never launch the TUI."""
+    if args.headless_command == "start":
+        info = start_background()
+        print(json.dumps({"type": "headless_server", "running": True, **_public_server_info(info)}, indent=2))
+        return 0
+    if args.headless_command == "status":
+        print(json.dumps(_headless_status(), indent=2))
+        return 0
+    if args.headless_command == "init":
+        return _headless_init(args)
+    return 2
+
+
+def _headless_init(args) -> int:
+    info = start_background()
+    workspace_response = request(
+        info,
+        {
+            "id": "headless",
+            "method": "workspace.create",
+            "params": {"label": args.workspace_label, "cwd": args.cwd},
+        },
+    )
+    if "error" in workspace_response:
+        return print_response(workspace_response)
+    workspace = workspace_response["result"]["workspace"]
+    panes_response = request(
+        info,
+        {
+            "id": "headless",
+            "method": "pane.list",
+            "params": {"workspace_id": workspace["workspace_id"]},
+        },
+    )
+    if "error" in panes_response:
+        return print_response(panes_response)
+    panes = panes_response["result"].get("panes", [])
+    pane = panes[0] if panes else None
+    if pane is not None and args.pane_title != "pane":
+        rename_response = request(
+            info,
+            {
+                "id": "headless",
+                "method": "pane.rename",
+                "params": {"pane_id": pane["pane_id"], "title": args.pane_title},
+            },
+        )
+        if "error" in rename_response:
+            return print_response(rename_response)
+        pane = rename_response["result"]["pane"]
+    command = _command_from_parts(args.command_parts)
+    started = None
+    if command and pane is not None:
+        start_response = request(
+            info,
+            {
+                "id": "headless",
+                "method": "pane.start",
+                "params": {"pane_id": pane["pane_id"], "command": command},
+            },
+        )
+        if "error" in start_response:
+            return print_response(start_response)
+        started = start_response["result"]
+        pane = started["pane"]
+    print(
+        json.dumps(
+            {
+                "type": "headless_init",
+                "server": _public_server_info(info),
+                "workspace": workspace,
+                "pane": pane,
+                "started": started,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _headless_status() -> dict[str, Any]:
+    info = read_server_info()
+    running = ping(info)
+    state = load_state(Path(info.state_path)) if info and running else load_state()
+    return {
+        "type": "headless_status",
+        "server": {
+            "running": running,
+            "host": info.host if info and running else None,
+            "port": info.port if info and running else None,
+            "pid": info.pid if info and running else None,
+            "state_path": info.state_path if info and running else None,
+        },
+        "session": _session_counts(state),
+    }
+
+
+def _session_counts(state) -> dict[str, int]:
+    return {
+        "workspaces": len(state.workspaces),
+        "tabs": sum(len(workspace.tabs) for workspace in state.workspaces),
+        "panes": sum(len(tab.panes) for workspace in state.workspaces for tab in workspace.tabs),
+    }
+
+
+def _public_server_info(info: ServerInfo) -> dict[str, Any]:
+    return {
+        "host": info.host,
+        "port": info.port,
+        "pid": info.pid,
+        "state_path": info.state_path,
+    }
 
 
 def run_api(args) -> int:
