@@ -299,6 +299,9 @@ class DemoScreenshotClient:
     def close_pane(self, pane_id: str) -> None:
         return None
 
+    def rename_pane(self, pane_id: str, title: str) -> dict[str, Any]:
+        return {"result": {"type": "pane_renamed"}}
+
     def close_tab(self, tab_id: str) -> None:
         return None
 

@@ -95,6 +95,10 @@ class PaneClient(Protocol):
         """Close a pane."""
         ...
 
+    def rename_pane(self, pane_id: str, title: str) -> dict[str, Any]:
+        """Rename a pane."""
+        ...
+
     def close_tab(self, tab_id: str) -> None:
         """Close a tab."""
         ...
@@ -210,6 +214,9 @@ class ServerClient:
 
     def close_pane(self, pane_id: str) -> None:
         self._request("pane.close", pane_id=pane_id)
+
+    def rename_pane(self, pane_id: str, title: str) -> dict[str, Any]:
+        return self._request("pane.rename", pane_id=pane_id, title=title)
 
     def close_tab(self, tab_id: str) -> None:
         self._request("tab.close", tab_id=tab_id)

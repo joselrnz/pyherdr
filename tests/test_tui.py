@@ -77,6 +77,7 @@ class FakeClient:
         self.splits: list[str] = []
         self.layouts: list[dict] = []
         self.renamed: list[tuple[str, str]] = []
+        self.renamed_panes: list[tuple[str, str]] = []
         self.scrolled: list[tuple[str, str]] = []
         self.moved: list[tuple[str, str]] = []
         self.moved_workspaces: list[tuple[str, str]] = []
@@ -141,6 +142,10 @@ class FakeClient:
 
     def close_pane(self, pane_id: str) -> None:
         self.closed_panes.append(pane_id)
+
+    def rename_pane(self, pane_id: str, title: str) -> dict:
+        self.renamed_panes.append((pane_id, title))
+        return {"result": {"type": "pane_renamed"}}
 
     def close_tab(self, tab_id: str) -> None:
         self.closed_tabs.append(tab_id)
@@ -1343,6 +1348,28 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(("t1", "renamed"), client.renamed)
             self.assertNotIsInstance(app.screen, RenameScreen)
 
+    async def test_rename_pane_via_keys(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+b")
+            await pilot.press("P")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, RenameScreen)
+            from textual.widgets import Input
+
+            app.screen.query_one("#rename-input", Input).focus()
+            await pilot.pause()
+            for _ in range(1):
+                await pilot.press("backspace")
+            for char in "worker":
+                await pilot.press(char)
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIn(("1-1", "worker"), client.renamed_panes)
+            self.assertNotIsInstance(app.screen, RenameScreen)
+
     async def test_working_agent_shows_in_panel_with_spinner(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
         async with app.run_test(size=(100, 30)) as pilot:
@@ -1952,6 +1979,22 @@ search_roots = ["{configured.as_posix()}"]
             await pilot.pause()
             await pilot.pause()
             self.assertIn("1-1", client.closed_panes)
+
+    async def test_pane_menu_rename(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._pane_id = "1-1"
+            app._open_pane_menu()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ContextMenuScreen)
+            await pilot.click("#ctx-9")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, RenameScreen)
+            app.screen.on_input_submitted(self._submit_event("menu-pane"))
+            await pilot.pause()
+            self.assertIn(("1-1", "menu-pane"), client.renamed_panes)
 
     async def test_copy_mode_selects_and_copies_scrollback_lines(self):
         class ScrollbackClient(FakeClient):

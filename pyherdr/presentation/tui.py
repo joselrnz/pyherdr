@@ -74,6 +74,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "x": "close_pane",
     "X": "close_tab",
     "T": "rename_tab",
+    "P": "rename_pane",
     "N": "new_workspace",
     "F": "fanout",
     "b": "toggle_sidebar",
@@ -340,6 +341,7 @@ def _help_text(palette: Palette) -> Text:
     row("r", "resize mode (then h/l/j/k, esc)")
     row("z", "zoom pane")
     row("m", "pane menu (split/zoom/scroll/close)")
+    row("P", "rename pane")
     row("x", "close pane")
     row("[", "copy mode")
     row("pgup/pgdn", "scroll the pane")
@@ -2800,6 +2802,8 @@ class PyHerdrTui(App):
             self.run_worker(self.reload(), exclusive=True)
         elif action == "rename_tab":
             self._open_rename_tab(self._tab_id)
+        elif action == "rename_pane":
+            self._open_rename_pane(self._pane_id)
         elif action in ("move_tab_left", "move_tab_right") and self._tab_id:
             self._client.move_tab(self._tab_id, "left" if action == "move_tab_left" else "right")
             self.run_worker(self.reload(), exclusive=True)
@@ -2922,6 +2926,7 @@ class PyHerdrTui(App):
                         ("copy output", "copy_output", arg),
                         ("resource usage", "pane_stats", arg),
                         ("close", "close_pane", arg),
+                        ("rename", "rename_pane", arg),
                     ],
                 )
             )
@@ -2931,6 +2936,8 @@ class PyHerdrTui(App):
             self.run_worker(self.reload(), exclusive=True)
         elif action == "rename_tab" and arg:
             self._open_rename_tab(arg)
+        elif action == "rename_pane" and arg:
+            self.call_after_refresh(self._open_rename_pane, arg)
         elif action == "ctx_workspace" and arg:
             self.push_screen(
                 ContextMenuScreen(
@@ -2977,7 +2984,7 @@ class PyHerdrTui(App):
         elif action in (
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "copy_mode",
-            "toggle_sidebar",
+            "rename_pane", "toggle_sidebar",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
             self._run_named_action(action)
@@ -3095,6 +3102,7 @@ class PyHerdrTui(App):
         ("Copy mode", "copy_mode"),
         ("Copy pane output", "copy_output"),
         ("Close pane", "close_pane"),
+        ("Rename pane", "rename_pane"),
         ("Close tab", "close_tab"),
         ("Rename tab", "rename_tab"),
         ("Move tab left", "move_tab_left"),
@@ -3161,6 +3169,7 @@ class PyHerdrTui(App):
                     ("copy output", "copy_output", pane_id),
                     ("resource usage", "pane_stats", pane_id),
                     ("close pane", "close_pane", pane_id),
+                    ("rename", "rename_pane", pane_id),
                 ],
             )
         )
@@ -3315,6 +3324,23 @@ class PyHerdrTui(App):
     def _rename_tab(self, tab_id: str, value: str) -> None:
         try:
             self._client.rename_tab(tab_id, value)
+        except Exception:
+            return
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _open_rename_pane(self, pane_id: str | None) -> None:
+        if not pane_id:
+            return
+        pane = self._pane_by_id(pane_id)
+        current = str(pane.get("title", "")) if pane else ""
+        self.push_screen(RenameScreen("rename pane", current, lambda value: self._rename_pane(str(pane_id), value)))
+
+    def _rename_pane(self, pane_id: str, value: str) -> None:
+        rename = getattr(self._client, "rename_pane", None)
+        if not callable(rename):
+            return
+        try:
+            rename(pane_id, value)
         except Exception:
             return
         self.run_worker(self.reload(), exclusive=True)
