@@ -2563,6 +2563,7 @@ class PyHerdrTui(App):
         self._tab_id: str | None = None
         self._pane_id: str | None = None
         self._terminal_versions: dict[str, int] = {}
+        self._terminal_sizes: dict[str, tuple[int, int]] = {}
         self._terminal_metadata: dict[str, dict[str, bool]] = {}
         self._terminal_input: queue.Queue[tuple[str, str, str]] = queue.Queue()
         self._terminal_input_lock = threading.Lock()
@@ -3645,6 +3646,7 @@ class PyHerdrTui(App):
         container = self.query_one("#panes", Horizontal)
         await container.remove_children()
         panes = {str(pane["id"]): pane for pane in self._focused_panes()}
+        self._terminal_sizes = {pane_id: size for pane_id, size in self._terminal_sizes.items() if pane_id in panes}
         if not panes:
             return
         if self._zoom and self._pane_id and self._pane_id in panes:
@@ -4215,6 +4217,7 @@ class PyHerdrTui(App):
             if pane_ids is not None and view.pane_id not in pane_ids:
                 continue
             try:
+                self._sync_pane_terminal_size(view)
                 output = self._client.pane_read(
                     view.pane_id, lines=400, styled=True, cursor=view.pane_id == self._pane_id
                 )
@@ -4225,6 +4228,26 @@ class PyHerdrTui(App):
                 view.update(Text.from_ansi(output))
             else:
                 view.update(Text("starting shell…", style=self._palette.overlay0))
+
+    @staticmethod
+    def _pane_terminal_size(view: PaneView) -> tuple[int, int] | None:
+        width = int(view.size.width)
+        height = int(view.size.height)
+        if width <= 0 or height <= 0:
+            return None
+        # PaneView has a one-cell border and horizontal padding. The PTY should
+        # match the cells available for terminal text, not the outer widget box.
+        rows = max(1, height - 2)
+        cols = max(1, width - 4)
+        return rows, cols
+
+    def _sync_pane_terminal_size(self, view: PaneView) -> None:
+        size = self._pane_terminal_size(view)
+        if size is None or self._terminal_sizes.get(view.pane_id) == size:
+            return
+        rows, cols = size
+        self._client.pane_resize(view.pane_id, rows, cols)
+        self._terminal_sizes[view.pane_id] = size
 
     # ----- styling helpers -----
     def _dot(self, status: str) -> tuple[str, str]:

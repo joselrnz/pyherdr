@@ -248,6 +248,9 @@ class DemoScreenshotClient:
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         return DEMO_OUTPUTS.get(pane_id, "")
 
+    def pane_resize(self, pane_id: str, rows: int, cols: int) -> dict[str, Any]:
+        return {"result": {"type": "pane_resize", "pane_id": pane_id, "rows": rows, "cols": cols}}
+
     def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
         return {"alt_screen": False, "mouse_reporting": False}
 

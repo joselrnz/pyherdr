@@ -27,6 +27,10 @@ class PaneClient(Protocol):
         """Return the rendered screen for a pane (ANSI-styled when ``styled``)."""
         ...
 
+    def pane_resize(self, pane_id: str, rows: int, cols: int) -> dict[str, Any]:
+        """Resize a pane's backing terminal to the visible cell area."""
+        ...
+
     def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
         """Wait until any watched pane has a newer output generation."""
         ...
@@ -165,6 +169,9 @@ class ServerClient:
 
     def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
         return self._terminal_metadata.get(pane_id, {"alt_screen": False, "mouse_reporting": False})
+
+    def pane_resize(self, pane_id: str, rows: int, cols: int) -> dict[str, Any]:
+        return self._request("pane.resize", pane_id=pane_id, rows=rows, cols=cols)
 
     def pane_wait_output(self, versions: dict[str, int], timeout: float = 1.0) -> dict[str, Any]:
         response = self._request("pane.wait_output", versions=versions, timeout=timeout)

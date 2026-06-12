@@ -89,6 +89,8 @@ class FakeClient:
         self.closed_workspaces: list[str] = []
         self.fanouts: list[dict] = []
         self.reads: list[tuple[str, int, bool, bool]] = []
+        self.resizes: list[tuple[str, int, int]] = []
+        self.events: list[tuple[str, str]] = []
         self.waits: list[dict[str, int]] = []
         self.terminal_metadata: dict[str, dict[str, bool]] = {}
 
@@ -100,7 +102,13 @@ class FakeClient:
 
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
         self.reads.append((pane_id, lines, styled, cursor))
+        self.events.append(("read", pane_id))
         return f"SCREEN:{pane_id}"
+
+    def pane_resize(self, pane_id: str, rows: int, cols: int) -> dict:
+        self.resizes.append((pane_id, rows, cols))
+        self.events.append(("resize", pane_id))
+        return {"result": {"type": "pane_resize", "pane_id": pane_id, "rows": rows, "cols": cols}}
 
     def pane_terminal_metadata(self, pane_id: str) -> dict[str, bool]:
         return self.terminal_metadata.get(pane_id, {"alt_screen": False, "mouse_reporting": False})
@@ -243,6 +251,33 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             self.assertEqual(len(list(app.query(PaneView))), 2)
+
+    async def test_pane_contents_resize_terminal_to_visible_cells_before_read(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            client.reads.clear()
+            client.resizes.clear()
+            client.events.clear()
+
+            app._update_pane_contents()
+            await pilot.pause()
+
+            resized = {pane_id: (rows, cols) for pane_id, rows, cols in client.resizes}
+            self.assertIn("1-1", resized)
+            self.assertIn("1-2", resized)
+            for rows, cols in resized.values():
+                self.assertGreaterEqual(rows, 1)
+                self.assertLess(rows, 30)
+                self.assertGreaterEqual(cols, 1)
+                self.assertLess(cols, 100)
+            for pane_id in ("1-1", "1-2"):
+                resize_index = client.events.index(("resize", pane_id))
+                read_index = client.events.index(("read", pane_id))
+                self.assertLess(resize_index, read_index)
+            self.assertIn(("1-1", 400, True, True), client.reads)
+            self.assertIn(("1-2", 400, True, False), client.reads)
 
     async def test_prefix_then_c_creates_a_tab(self):
         client = FakeClient()
