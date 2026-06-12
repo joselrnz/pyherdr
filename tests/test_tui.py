@@ -3,6 +3,7 @@ import threading
 import time
 import unittest
 
+from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
@@ -2454,6 +2455,37 @@ search_roots = ["{configured.as_posix()}"]
             await pilot.pause()
             self.assertEqual(client.tabs, 1)
             self.assertIn(("new-pane", command), client.started)
+
+    async def test_shell_dropdown_launches_agent_preset(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        app._launcher_presets = [LauncherPreset("codex", "Codex", "codex", "Launch Codex", "codex", True)]
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            await pilot.click("#newterm")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ShellPickerScreen)
+            await pilot.click("#launchpick-0")
+            await pilot.pause()
+            await pilot.pause()
+
+        self.assertEqual(client.tabs, 1)
+        self.assertIn(("new-pane", "codex"), client.started)
+
+    async def test_command_palette_includes_launcher_presets(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        app._launcher_presets = [LauncherPreset("claude", "Claude Code", "claude", "Launch Claude", "claude", True)]
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            entries = app._palette_entries()
+            index = next(i for i, (label, _value, _is_command) in enumerate(entries) if label == "Launch: Claude Code")
+            app.run_palette_entry(entries[index][1], entries[index][2])
+            await pilot.pause()
+            await pilot.pause()
+
+        self.assertEqual(client.tabs, 1)
+        self.assertIn(("new-pane", "claude"), client.started)
 
     async def test_shell_dropdown_allows_shell_labels_with_spaces(self):
         client = FakeClient()

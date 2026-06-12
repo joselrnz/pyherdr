@@ -40,6 +40,7 @@ from textual.widgets import Input, Static
 
 from ..config import AgentPanelScope, load_config
 from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
+from ..launchers import LauncherPreset, launcher_presets
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents, remove_workspace_recent
@@ -1577,12 +1578,12 @@ class ContextMenuScreen(ModalScreen[None]):
 
 
 class ShellPickerScreen(ModalScreen[None]):
-    """A dropdown to pick which shell a new terminal/tab runs (ctrl+b n-area)."""
+    """A dropdown to pick which launcher or shell a new terminal/tab runs."""
 
     DEFAULT_CSS = """
     ShellPickerScreen { align: center middle; background: $ph-base 60%; }
     #shell-box {
-        width: 32;
+        width: 48;
         height: auto;
         background: $ph-mantle;
         border: round $ph-accent;
@@ -1591,25 +1592,49 @@ class ShellPickerScreen(ModalScreen[None]):
     }
     .shell-row { width: 1fr; color: $ph-text; padding: 0 1; }
     .shell-row:hover { background: $ph-accent; color: $ph-base; text-style: bold; }
+    .shell-section { width: 1fr; color: $ph-subtext0; padding: 1 1 0 1; text-style: bold; }
     #shell-foot { color: $ph-subtext0; padding: 1 1 0 1; }
     """
 
-    def __init__(self, shells: list[tuple[str, str]]) -> None:
+    def __init__(self, shells: list[tuple[str, str]], launchers: list[LauncherPreset] | None = None) -> None:
         super().__init__()
         self._shells = shells
+        self._launchers = launchers or []
 
     def compose(self) -> ComposeResult:
-        rows = [
+        rows: list[Widget] = []
+        if self._launchers:
+            rows.append(Static("presets", classes="shell-section"))
+            rows.extend(
+                Clickable(
+                    self._launcher_label(preset),
+                    "new_launcher",
+                    preset.command,
+                    id=f"launchpick-{index}",
+                    classes="shell-row",
+                )
+                for index, preset in enumerate(self._launchers)
+            )
+        rows.append(Static("shells", classes="shell-section"))
+        rows.extend(
             Clickable(f"  {label}", "new_shell", command, id=f"shellpick-{index}", classes="shell-row")
             for index, (label, command) in enumerate(self._shells)
-        ]
-        box = Vertical(*rows, Static("click a shell · esc close", id="shell-foot"), id="shell-box")
+        )
+        box = Vertical(*rows, Static("click a launcher or shell · esc close", id="shell-foot"), id="shell-box")
         box.border_title = "new terminal"
         yield box
 
+    @staticmethod
+    def _launcher_label(preset: LauncherPreset) -> Text:
+        text = Text("  ")
+        text.append(preset.label, style="bold")
+        if preset.description:
+            text.append(f" · {preset.description}", style="#6c7086")
+        return text
+
     def on_activated(self, message: Activated) -> None:
         message.stop()
-        if message.action == "new_shell" and message.arg:
+        if message.action in ("new_shell", "new_launcher") and message.arg:
             handler = getattr(self.app, "run_menu_action", None)
             self.dismiss()
             if callable(handler):
@@ -2720,6 +2745,7 @@ class PyHerdrTui(App):
         self._client: PaneClient = client or ServerClient()
         self._poll_interval = poll_interval
         self._shells = _available_shells()
+        self._launcher_presets = launcher_presets(config, default_shell=_default_shell())
         self._state: dict = {"workspaces": []}
         self._branches: dict[str, str] = {}
         self._ahead_behind: dict[str, tuple[int, int]] = {}
@@ -3153,7 +3179,7 @@ class PyHerdrTui(App):
             self._client.move_workspace(arg, "up" if action == "move_workspace_up" else "down")
             self.run_worker(self.reload(), exclusive=True)
         elif action == "open_shell_picker":
-            self.push_screen(ShellPickerScreen(self._shells))
+            self.push_screen(ShellPickerScreen(self._shells, self._launcher_presets))
         elif action == "new_workspace":
             self._open_new_workspace()
         elif action == "new_shell" and arg:
@@ -3322,6 +3348,8 @@ class PyHerdrTui(App):
 
     def _palette_entries(self) -> list[tuple[str, str, bool]]:
         entries: list[tuple[str, str, bool]] = [(label, action, False) for label, action in self._PALETTE_ACTIONS]
+        for preset in self._launcher_presets:
+            entries.append((f"Launch: {preset.label}", preset.command, True))
         for command in self._commands.values():
             entries.append((f"Run: {command}", command, True))
         return entries

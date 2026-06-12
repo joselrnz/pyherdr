@@ -173,6 +173,22 @@ class CommandBinding(_Section):
     description: str = ""
 
 
+class LauncherPresetConfig(_Section):
+    """A configured launcher preset shown in the TUI picker."""
+
+    id: str = ""
+    label: str = ""
+    command: str
+    description: str = ""
+    agent: str = ""
+
+
+class LaunchersConfig(_Section):
+    """User-defined launcher presets."""
+
+    presets: list[LauncherPresetConfig] = Field(default_factory=list)
+
+
 class KeysConfig(_Section):
     """Keybinding config: custom prefix, action→key overrides, and commands."""
 
@@ -192,6 +208,7 @@ class Config(_Section):
     session: SessionConfig = SessionConfig()
     update: UpdateConfig = UpdateConfig()
     keys: KeysConfig = KeysConfig()
+    launchers: LaunchersConfig = LaunchersConfig()
     ui: UiConfig = UiConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     worktrees: WorktreesConfig = WorktreesConfig()
