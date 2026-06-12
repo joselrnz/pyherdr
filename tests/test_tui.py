@@ -86,6 +86,7 @@ class FakeClient:
         self.created_workspaces: list[tuple[str, str]] = []
         self.focused_workspaces: list[str] = []
         self.focused_tabs: list[str] = []
+        self.focused_agents: list[tuple[str | None, bool]] = []
         self.renamed_workspaces: list[tuple[str, str]] = []
         self.closed_workspaces: list[str] = []
         self.fanouts: list[dict] = []
@@ -186,6 +187,56 @@ class FakeClient:
     def focus_tab(self, tab_id: str) -> dict:
         self.focused_tabs.append(tab_id)
         return {"result": {"type": "tab_focused"}}
+
+    def focus_agent(self, target: str | None = None, *, attention: bool = False) -> dict:
+        self.focused_agents.append((target, attention))
+        state = self.state()
+        candidates: list[tuple[dict, dict, dict]] = []
+        for workspace in state.get("workspaces", []):
+            for tab in workspace.get("tabs", []):
+                for pane in tab.get("panes", []):
+                    if attention and pane.get("status") not in ("blocked", "done"):
+                        continue
+                    if not attention and pane.get("id") != target and pane.get("title") != target:
+                        continue
+                    candidates.append((workspace, tab, pane))
+        if not candidates:
+            raise KeyError("agent not found")
+        focused_workspace_id = state.get("focused_workspace_id")
+        current = (
+            focused_workspace_id,
+            next(
+                (
+                    workspace.get("focused_tab_id")
+                    for workspace in state.get("workspaces", [])
+                    if workspace.get("id") == focused_workspace_id
+                ),
+                None,
+            ),
+            None,
+        )
+        if current[1]:
+            for workspace in state.get("workspaces", []):
+                if workspace.get("id") != current[0]:
+                    continue
+                for tab in workspace.get("tabs", []):
+                    if tab.get("id") == current[1]:
+                        current = (current[0], current[1], tab.get("focused_pane_id"))
+        picked = candidates[0]
+        for index, (workspace, tab, pane) in enumerate(candidates):
+            if (workspace.get("id"), tab.get("id"), pane.get("id")) == current:
+                picked = candidates[(index + 1) % len(candidates)]
+                break
+        workspace, tab, pane = picked
+        state["focused_workspace_id"] = workspace["id"]
+        workspace["focused_tab_id"] = tab["id"]
+        tab["focused_pane_id"] = pane["id"]
+        return {
+            "result": {
+                "type": "agent_focused",
+                "agent": {"workspace_id": workspace["id"], "tab_id": tab["id"], "pane_id": pane["id"]},
+            }
+        }
 
     def rename_workspace(self, workspace_id: str, label: str) -> dict:
         self.renamed_workspaces.append((workspace_id, label))
@@ -1633,6 +1684,31 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertIsInstance(app.screen, WorktreeScreen)
+
+    async def test_prefix_then_a_cycles_attention_panes(self):
+        client = FakeClient()
+        client_state = json.loads(json.dumps(STATE))
+        client_state["workspaces"][0]["tabs"][0]["panes"][1]["status"] = "done"
+        client_state["workspaces"][0]["tabs"][1]["panes"][0]["status"] = "blocked"
+        client.state = lambda: client_state  # type: ignore[method-assign]
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+
+            await pilot.press("ctrl+b")
+            await pilot.press("a")
+            await pilot.pause()
+
+            self.assertEqual(app._tab_id, "t1")
+            self.assertEqual(app._pane_id, "1-2")
+            self.assertEqual(client.focused_agents[-1], (None, True))
+
+            await pilot.press("ctrl+b")
+            await pilot.press("a")
+            await pilot.pause()
+
+            self.assertEqual(app._tab_id, "t2")
+            self.assertEqual(app._pane_id, "2-1")
 
     def test_workflow_terminal_graph_centers_arrows_and_marks_cycles(self):
         request = new_event(

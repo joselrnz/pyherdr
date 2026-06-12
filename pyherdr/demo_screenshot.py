@@ -293,6 +293,14 @@ class DemoScreenshotClient:
     def focus_tab(self, tab_id: str) -> dict[str, Any]:
         return {"result": {"type": "tab_focused"}}
 
+    def focus_agent(self, target: str | None = None, *, attention: bool = False) -> dict[str, Any]:
+        return {
+            "result": {
+                "type": "agent_focused",
+                "agent": {"workspace_id": "ws-main", "tab_id": "tab-agents", "pane_id": "pane-loop"},
+            }
+        }
+
     def rename_workspace(self, workspace_id: str, label: str) -> dict[str, Any]:
         return {"result": {"type": "workspace_renamed"}}
 

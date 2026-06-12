@@ -78,6 +78,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "N": "new_workspace",
     "W": "worktrees",
     "F": "fanout",
+    "a": "jump_attention",
     "b": "toggle_sidebar",
     "w": "next_workspace",
     "g": "goto",
@@ -357,6 +358,7 @@ def _help_text(palette: Palette) -> Text:
     row("N", "new workspace (folder picker)")
     row("W", "worktrees")
     row("w", "next workspace")
+    row("a", "jump to blocked/done")
     row("{ / }", "move workspace up / down")
     group("global")
     row(":", "command palette (run anything)")
@@ -3037,6 +3039,8 @@ class PyHerdrTui(App):
             self._open_workflow_view()
         elif action == "fanout":
             self._open_fanout_picker()
+        elif action == "jump_attention":
+            self._jump_to_attention()
         elif action in ("quit", "detach"):
             # Detach == leave the TUI; the background server keeps every pane
             # running, so reopening `pyherdr tui` re-attaches to them.
@@ -3171,6 +3175,7 @@ class PyHerdrTui(App):
         elif action in (
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "worktrees",
+            "jump_attention",
             "copy_mode",
             "rename_pane", "toggle_sidebar", "toggle_agent_scope",
         ):
@@ -3299,6 +3304,7 @@ class PyHerdrTui(App):
         ("Previous tab", "prev_tab"),
         ("New workspace…", "new_workspace"),
         ("Worktrees…", "worktrees"),
+        ("Jump to attention", "jump_attention"),
         ("Move workspace up", "move_workspace_up"),
         ("Move workspace down", "move_workspace_down"),
         ("New terminal (pick shell)…", "open_shell_picker"),
@@ -3392,6 +3398,24 @@ class PyHerdrTui(App):
         if len(parts) != 3:
             return
         self._workspace_id, self._tab_id, self._pane_id = parts
+        self.run_worker(self.reload(), exclusive=True)
+
+    def _jump_to_attention(self) -> None:
+        """Focus the next blocked/done agent pane."""
+        try:
+            response = self._client.focus_agent(attention=True)
+        except Exception:
+            self.notify("No blocked or done agents", severity="information", timeout=4)
+            return
+        agent = response.get("result", {}).get("agent", {})
+        workspace_id = str(agent.get("workspace_id") or "")
+        tab_id = str(agent.get("tab_id") or "")
+        pane_id = str(agent.get("pane_id") or "")
+        if not (workspace_id and tab_id and pane_id):
+            return
+        self._workspace_id = workspace_id
+        self._tab_id = tab_id
+        self._pane_id = pane_id
         self.run_worker(self.reload(), exclusive=True)
 
     def _open_new_workspace(self) -> None:
@@ -3971,7 +3995,7 @@ class PyHerdrTui(App):
                 Clickable("◄", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
                 classes="navhead",
             ),
-            Static(self._attention_text(), id="attention", classes="attention"),
+            Clickable(self._attention_text(), "jump_attention", id="attention", classes="attention"),
             Static(self._spaces_header_text(workspaces), classes="navsectionhead"),
         ]
         for index, workspace in enumerate(workspaces, start=1):
@@ -4002,7 +4026,7 @@ class PyHerdrTui(App):
     def _compact_sidebar_widgets(self) -> list[Widget]:
         widgets: list[Widget] = [
             Clickable("►", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
-            Static(self._compact_attention_text(), id="attention", classes="compact-attention"),
+            Clickable(self._compact_attention_text(), "jump_attention", id="attention", classes="compact-attention"),
         ]
         for index, workspace in enumerate(self._workspaces(), start=1):
             ws_id = str(workspace.get("id"))

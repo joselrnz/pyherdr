@@ -806,6 +806,15 @@ def _pane_report_agent(state: AppState, params: dict[str, Any], _processes: Term
     return {"type": "pane_agent_reported", "pane": _pane_record(pane, workspace_id, tab_id)}
 
 
+def _agent_contexts(state: AppState) -> list[tuple[Pane, str, str]]:
+    return [
+        (pane, workspace.id, tab.id)
+        for workspace in state.workspaces
+        for tab in workspace.tabs
+        for pane in tab.panes
+    ]
+
+
 def _resolve_agent(state: AppState, target: str) -> tuple[Pane, str, str]:
     """Resolve an agent target (pane id, agent label, or pane title) to a pane."""
     for workspace in state.workspaces:
@@ -820,6 +829,34 @@ def _resolve_agent(state: AppState, target: str) -> tuple[Pane, str, str]:
                 if pane.agent.lower() == lowered or pane.title.lower() == lowered:
                     return pane, workspace.id, tab.id
     raise KeyError(f"agent not found: {target}")
+
+
+def _next_attention_agent(state: AppState) -> tuple[Pane, str, str]:
+    targets = [context for context in _agent_contexts(state) if context[0].status.is_attention_required]
+    if not targets:
+        raise KeyError("no blocked or done agents found")
+
+    current_workspace_id = state.focused_workspace_id
+    current_tab_id: str | None = None
+    current_pane_id: str | None = None
+    if current_workspace_id:
+        try:
+            current_workspace = state.require_workspace(current_workspace_id)
+        except KeyError:
+            current_workspace = None
+        if current_workspace is not None:
+            current_tab_id = current_workspace.focused_tab_id
+            if current_tab_id:
+                try:
+                    current_pane_id = state.require_tab(current_workspace_id, current_tab_id).focused_pane_id
+                except KeyError:
+                    current_pane_id = None
+
+    current = (current_workspace_id, current_tab_id, current_pane_id)
+    for index, (pane, workspace_id, tab_id) in enumerate(targets):
+        if (workspace_id, tab_id, pane.id) == current:
+            return targets[(index + 1) % len(targets)]
+    return targets[0]
 
 
 def _agent_list(state: AppState, _params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
@@ -869,7 +906,10 @@ def _agent_rename(state: AppState, params: dict[str, Any], _processes: TerminalM
 
 
 def _agent_focus(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
-    pane, workspace_id, tab_id = _resolve_agent(state, _required(params, "target"))
+    if params.get("attention"):
+        pane, workspace_id, tab_id = _next_attention_agent(state)
+    else:
+        pane, workspace_id, tab_id = _resolve_agent(state, _required(params, "target"))
     state.focused_workspace_id = workspace_id
     workspace = state.require_workspace(workspace_id)
     workspace.focused_tab_id = tab_id

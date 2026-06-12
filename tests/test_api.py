@@ -298,6 +298,25 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response["result"]["pane"]["agent_status"], "blocked")
         self.assertEqual(pane.custom_status, "approval")
 
+    def test_agent_focus_attention_cycles_blocked_and_done_panes(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        tab = state.focused_workspace.focused_tab
+        first = tab.focused_pane
+        first.status = AgentStatus.DONE
+        second = state.create_pane(state.focused_workspace.id, tab.id, "blocked")
+        second.status = AgentStatus.BLOCKED
+        tab.focused_pane_id = first.id
+
+        response = dispatch(state, {"id": "1", "method": "agent.focus", "params": {"attention": True}})
+
+        self.assertEqual(response["result"]["agent"]["pane_id"], second.id)
+        self.assertEqual(tab.focused_pane_id, second.id)
+
+        response = dispatch(state, {"id": "2", "method": "agent.focus", "params": {"attention": True}})
+
+        self.assertEqual(response["result"]["agent"]["pane_id"], first.id)
+        self.assertEqual(tab.focused_pane_id, first.id)
+
     def _capture(self, state, processes, params=None):
         pane = state.focused_workspace.focused_tab.focused_pane
         request = {"id": "c", "method": "pane.capture", "params": {"pane_id": pane.id, **(params or {})}}

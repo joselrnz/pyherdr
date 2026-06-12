@@ -34,6 +34,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workspace-search")
 
+    def test_agent_focus_accepts_attention_target(self):
+        args = build_parser().parse_args(["agent", "focus", "--attention"])
+
+        self.assertEqual(args.command, "agent")
+        self.assertEqual(args.agent_command, "focus")
+        self.assertTrue(args.attention)
+        self.assertIsNone(args.target)
+
     def test_demo_screenshot_accepts_workspace_search_variant_views(self):
         for view in ("workspace-search-selected", "workspace-search-stale", "workspace-search-long-path"):
             with self.subTest(view=view):

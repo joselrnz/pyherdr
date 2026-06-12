@@ -437,7 +437,8 @@ def build_parser() -> argparse.ArgumentParser:
     agent_rename.add_argument("target")
     agent_rename.add_argument("name")
     agent_focus = agent_sub.add_parser("focus")
-    agent_focus.add_argument("target")
+    agent_focus.add_argument("target", nargs="?")
+    agent_focus.add_argument("--attention", action="store_true", help="focus the next blocked or done agent")
     agent_start = agent_sub.add_parser("start")
     agent_start.add_argument("name")
     agent_start.add_argument("--cwd")
@@ -1335,7 +1336,12 @@ def run_agent(args) -> int:
             {"id": "cli", "method": "agent.rename", "params": {"target": args.target, "name": args.name}}
         )
     elif args.agent_command == "focus":
-        response = ensure_request({"id": "cli", "method": "agent.focus", "params": {"target": args.target}})
+        if args.attention:
+            response = ensure_request({"id": "cli", "method": "agent.focus", "params": {"attention": True}})
+        elif args.target:
+            response = ensure_request({"id": "cli", "method": "agent.focus", "params": {"target": args.target}})
+        else:
+            raise SystemExit("agent focus requires a target or --attention")
     elif args.agent_command == "start":
         response = ensure_request(
             {

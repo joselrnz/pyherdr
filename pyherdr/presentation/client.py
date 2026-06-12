@@ -87,6 +87,10 @@ class PaneClient(Protocol):
         """Tell the server which tab is focused in the focused workspace."""
         ...
 
+    def focus_agent(self, target: str | None = None, *, attention: bool = False) -> dict[str, Any]:
+        """Focus an agent by target, or cycle to the next blocked/done agent."""
+        ...
+
     def rename_workspace(self, workspace_id: str, label: str) -> dict[str, Any]:
         """Rename a workspace."""
         ...
@@ -239,6 +243,10 @@ class ServerClient:
 
     def focus_tab(self, tab_id: str) -> dict[str, Any]:
         return self._request("tab.focus", tab_id=tab_id)
+
+    def focus_agent(self, target: str | None = None, *, attention: bool = False) -> dict[str, Any]:
+        params: dict[str, Any] = {"attention": True} if attention else {"target": target}
+        return self._request("agent.focus", **params)
 
     def rename_workspace(self, workspace_id: str, label: str) -> dict[str, Any]:
         return self._request("workspace.rename", workspace_id=workspace_id, label=label)
