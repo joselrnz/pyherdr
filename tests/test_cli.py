@@ -315,6 +315,51 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.no_enter)
         self.assertEqual(args.command_parts, ["pytest", "-q"])
 
+    def test_layout_templates_command_lists_builtin_templates(self):
+        from pyherdr.cli import run_layout
+
+        args = build_parser().parse_args(["layout", "templates"])
+
+        def fake_request(request):
+            return {
+                "id": "cli",
+                "result": {
+                    "type": "layout_template_list",
+                    "templates": [{"id": "grid-2x2", "label": "2x2 grid", "pane_count": 4}],
+                },
+            }
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+            exit_code = run_layout(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"grid-2x2"', stdout.getvalue())
+
+    def test_layout_apply_command_dispatches_template_request(self):
+        from pyherdr.cli import run_layout
+
+        args = build_parser().parse_args(
+            ["layout", "apply", "grid-2x2", "--workspace-id", "ws_1", "--tab-id", "tab_1"]
+        )
+        captured: dict = {}
+
+        def fake_request(request):
+            captured.update(request)
+            return {"id": "cli", "result": {"type": "layout_template_applied", "pane_count": 4}}
+
+        stdout = StringIO()
+        with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+            exit_code = run_layout(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["method"], "layout.template.apply")
+        self.assertEqual(
+            captured["params"],
+            {"template": "grid-2x2", "workspace_id": "ws_1", "tab_id": "tab_1"},
+        )
+        self.assertIn('"layout_template_applied"', stdout.getvalue())
+
     def test_pane_capture_parses_lines_styled_and_text_flags(self):
         args = build_parser().parse_args(["pane", "capture", "1-1", "--lines", "50", "--styled", "--text"])
 

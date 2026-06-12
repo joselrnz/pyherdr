@@ -1,6 +1,14 @@
 import unittest
 
-from pyherdr.layout import Direction, NavDirection, Rect, TileLayout, split_rect
+from pyherdr.layout import (
+    Direction,
+    NavDirection,
+    Rect,
+    TileLayout,
+    build_template_layout,
+    layout_template_records,
+    split_rect,
+)
 
 
 class LayoutTests(unittest.TestCase):
@@ -158,6 +166,48 @@ class LayoutTests(unittest.TestCase):
                 "focus": "left",
             },
         )
+
+    def test_layout_template_records_expose_builtin_shapes(self):
+        records = layout_template_records()
+
+        self.assertEqual(
+            [record["id"] for record in records],
+            ["single", "columns-2", "rows-2", "grid-2x2", "main-left", "main-top"],
+        )
+        self.assertEqual(records[3]["pane_count"], 4)
+
+    def test_grid_template_builds_even_two_by_two_layout(self):
+        layout = build_template_layout("grid-2x2", ["a", "b", "c", "d"])
+
+        self.assertEqual(layout.pane_ids(), ["a", "b", "c", "d"])
+        self.assertEqual(layout.focus, "a")
+        self.assertEqual(
+            [(pane.pane_id, pane.rect) for pane in layout.panes(Rect(0, 0, 100, 40))],
+            [
+                ("a", Rect(0, 0, 50, 20)),
+                ("b", Rect(50, 0, 50, 20)),
+                ("c", Rect(0, 20, 50, 20)),
+                ("d", Rect(50, 20, 50, 20)),
+            ],
+        )
+
+    def test_main_left_template_allocates_primary_pane_and_side_stack(self):
+        layout = build_template_layout("main-left", ["main", "top", "bottom"])
+
+        self.assertEqual(
+            [(pane.pane_id, pane.rect) for pane in layout.panes(Rect(0, 0, 100, 40))],
+            [
+                ("main", Rect(0, 0, 65, 40)),
+                ("top", Rect(65, 0, 35, 20)),
+                ("bottom", Rect(65, 20, 35, 20)),
+            ],
+        )
+
+    def test_template_builder_rejects_unknown_template_or_too_few_panes(self):
+        with self.assertRaises(ValueError):
+            build_template_layout("missing", ["a"])
+        with self.assertRaises(ValueError):
+            build_template_layout("grid-2x2", ["a", "b", "c"])
 
 
 if __name__ == "__main__":

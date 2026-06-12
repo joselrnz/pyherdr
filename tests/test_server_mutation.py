@@ -17,7 +17,15 @@ class MutatesStateTests(unittest.TestCase):
             self.assertFalse(mutates_state(method), method)
 
     def test_read_only_queries_do_not_persist(self):
-        for method in ("ping", "state.get", "events.snapshot", "workspace.list", "tab.list", "pane.list"):
+        for method in (
+            "ping",
+            "state.get",
+            "events.snapshot",
+            "layout.template.list",
+            "workspace.list",
+            "tab.list",
+            "pane.list",
+        ):
             self.assertFalse(mutates_state(method), method)
 
     def test_high_frequency_terminal_requests_are_quiet(self):

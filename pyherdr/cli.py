@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_workspace(args)
     if args.command == "worktree":
         return run_worktree(args)
+    if args.command == "layout":
+        return run_layout(args)
     if args.command == "tab":
         return run_tab(args)
     if args.command == "pane":
@@ -325,6 +327,14 @@ def build_parser() -> argparse.ArgumentParser:
     worktree_remove = worktree_sub.add_parser("remove")
     worktree_remove.add_argument("path")
     worktree_remove.add_argument("--force", action="store_true")
+
+    layout = sub.add_parser("layout", help="layout template commands")
+    layout_sub = layout.add_subparsers(dest="layout_command", required=True)
+    layout_sub.add_parser("templates", help="list built-in layout templates")
+    layout_apply = layout_sub.add_parser("apply", help="apply a built-in layout template")
+    layout_apply.add_argument("template")
+    layout_apply.add_argument("--workspace-id")
+    layout_apply.add_argument("--tab-id")
 
     tab = sub.add_parser("tab", help="tab commands")
     tab_sub = tab.add_subparsers(dest="tab_command", required=True)
@@ -1073,6 +1083,26 @@ def run_worktree(args) -> int:
     elif args.worktree_command == "remove":
         response = ensure_request(
             {"id": "cli", "method": "worktree.remove", "params": {"path": args.path, "force": args.force}}
+        )
+    else:
+        return 2
+    return print_response(response)
+
+
+def run_layout(args) -> int:
+    if args.layout_command == "templates":
+        response = ensure_request({"id": "cli", "method": "layout.template.list", "params": {}})
+    elif args.layout_command == "apply":
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "layout.template.apply",
+                "params": {
+                    "template": args.template,
+                    "workspace_id": args.workspace_id,
+                    "tab_id": args.tab_id,
+                },
+            }
         )
     else:
         return 2

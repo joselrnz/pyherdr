@@ -17,6 +17,7 @@ Rust original.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -110,6 +111,25 @@ class SplitBorder:
     ratio: float
     area: Rect
     path: tuple[bool, ...]  # route from root: False = first child, True = second child
+
+
+@dataclass(frozen=True)
+class LayoutTemplate:
+    """A built-in pane layout template."""
+
+    id: str
+    label: str
+    pane_count: int
+    description: str
+    builder: Callable[[list[str]], Node]
+
+    def record(self) -> dict[str, str | int]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "pane_count": self.pane_count,
+            "description": self.description,
+        }
 
 
 def split_rect(area: Rect, direction: Direction, ratio: float) -> tuple[Rect, Rect]:
@@ -389,6 +409,77 @@ class TileLayout:
             ids = layout.pane_ids()
             layout.focus = ids[0] if ids else ""
         return layout
+
+
+def layout_template_records() -> list[dict[str, str | int]]:
+    """Return the built-in templates in display order."""
+    return [template.record() for template in LAYOUT_TEMPLATES]
+
+
+def layout_template_record(template_id: str) -> dict[str, str | int]:
+    """Return one template's public metadata or raise ``ValueError``."""
+    return _require_template(template_id).record()
+
+
+def build_template_layout(template_id: str, pane_ids: list[str]) -> TileLayout:
+    """Build a template split tree for ``pane_ids``.
+
+    Templates are intentionally safe: they require enough panes for the named
+    shape but do not delete extra panes. Extra panes are preserved in a simple
+    trailing horizontal chain so applying a smaller template never destroys a
+    running session.
+    """
+    template = _require_template(template_id)
+    if len(pane_ids) < template.pane_count:
+        raise ValueError(
+            f"layout template {template.id!r} requires {template.pane_count} pane(s), got {len(pane_ids)}"
+        )
+    root = template.builder(list(pane_ids[: template.pane_count]))
+    for pane_id in pane_ids[template.pane_count :]:
+        root = SplitNode(Direction.HORIZONTAL, 0.75, root, PaneNode(pane_id))
+    return TileLayout(root, pane_ids[0])
+
+
+def _require_template(template_id: str) -> LayoutTemplate:
+    normalized = str(template_id or "").strip().lower()
+    for template in LAYOUT_TEMPLATES:
+        if template.id == normalized:
+            return template
+    raise ValueError(f"unknown layout template: {template_id}")
+
+
+def _columns_2(ids: list[str]) -> Node:
+    return SplitNode(Direction.HORIZONTAL, 0.5, PaneNode(ids[0]), PaneNode(ids[1]))
+
+
+def _rows_2(ids: list[str]) -> Node:
+    return SplitNode(Direction.VERTICAL, 0.5, PaneNode(ids[0]), PaneNode(ids[1]))
+
+
+def _grid_2x2(ids: list[str]) -> Node:
+    top = SplitNode(Direction.HORIZONTAL, 0.5, PaneNode(ids[0]), PaneNode(ids[1]))
+    bottom = SplitNode(Direction.HORIZONTAL, 0.5, PaneNode(ids[2]), PaneNode(ids[3]))
+    return SplitNode(Direction.VERTICAL, 0.5, top, bottom)
+
+
+def _main_left(ids: list[str]) -> Node:
+    side = SplitNode(Direction.VERTICAL, 0.5, PaneNode(ids[1]), PaneNode(ids[2]))
+    return SplitNode(Direction.HORIZONTAL, 0.65, PaneNode(ids[0]), side)
+
+
+def _main_top(ids: list[str]) -> Node:
+    bottom = SplitNode(Direction.HORIZONTAL, 0.5, PaneNode(ids[1]), PaneNode(ids[2]))
+    return SplitNode(Direction.VERTICAL, 0.6, PaneNode(ids[0]), bottom)
+
+
+LAYOUT_TEMPLATES: tuple[LayoutTemplate, ...] = (
+    LayoutTemplate("single", "Single pane", 1, "One focused pane fills the tab.", lambda ids: PaneNode(ids[0])),
+    LayoutTemplate("columns-2", "Two columns", 2, "Two equal side-by-side panes.", _columns_2),
+    LayoutTemplate("rows-2", "Two rows", 2, "Two equal stacked panes.", _rows_2),
+    LayoutTemplate("grid-2x2", "2x2 grid", 4, "Four panes in an even grid.", _grid_2x2),
+    LayoutTemplate("main-left", "Main left", 3, "Large primary pane with a right-side stack.", _main_left),
+    LayoutTemplate("main-top", "Main top", 3, "Large primary pane above two lower panes.", _main_top),
+)
 
 
 def _node_to_dict(node: Node) -> dict[str, Any]:

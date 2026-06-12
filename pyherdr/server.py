@@ -406,6 +406,7 @@ def mutates_state(method: str) -> bool:
         "stats.get",
         "events.snapshot",
         "notification.show",
+        "layout.template.list",
         "workspace.list",
         "tab.list",
         "pane.list",

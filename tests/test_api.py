@@ -165,6 +165,40 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(updated.root.second.first.pane_id, second.id)
         self.assertEqual(updated.root.second.second.pane_id, new_id)
 
+    def test_layout_template_list_returns_builtin_templates(self):
+        state = AppState.bootstrap(cwd="C:/work")
+
+        response = dispatch(state, {"id": "templates", "method": "layout.template.list", "params": {}})
+
+        self.assertEqual(response["result"]["type"], "layout_template_list")
+        self.assertEqual(
+            [template["id"] for template in response["result"]["templates"]],
+            ["single", "columns-2", "rows-2", "grid-2x2", "main-left", "main-top"],
+        )
+
+    def test_layout_template_apply_creates_missing_panes_and_sets_layout(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        workspace = state.focused_workspace
+        tab = workspace.focused_tab
+
+        response = dispatch(
+            state,
+            {
+                "id": "apply",
+                "method": "layout.template.apply",
+                "params": {"template": "grid-2x2", "workspace_id": workspace.id, "tab_id": tab.id},
+            },
+        )
+
+        self.assertEqual(response["result"]["type"], "layout_template_applied")
+        self.assertEqual(response["result"]["template"]["id"], "grid-2x2")
+        self.assertEqual(response["result"]["pane_count"], 4)
+        self.assertEqual(len(tab.panes), 4)
+        updated = TileLayout.from_dict(tab.layout)
+        self.assertEqual(updated.pane_ids(), [pane.id for pane in tab.panes])
+        self.assertEqual(tab.focused_pane_id, tab.panes[0].id)
+        self.assertEqual(updated.focus, tab.panes[0].id)
+
     def test_pane_read_includes_terminal_metadata(self):
         state = AppState.bootstrap(cwd="C:/work")
         pane = state.focused_workspace.focused_tab.focused_pane

@@ -14,7 +14,14 @@ from .contracts.api import ApiError, ApiRequest, ApiResponse
 from .cron import parse_cron
 from .detect import detect, identify_agent_in_command, parse_agent_label
 from .detector import detect_agent_status
-from .layout import Direction, PaneNode, TileLayout
+from .layout import (
+    Direction,
+    PaneNode,
+    TileLayout,
+    build_template_layout,
+    layout_template_record,
+    layout_template_records,
+)
 from .live_updates import build_state_events
 from .models import AgentStatus, AppState, Pane, Tab
 from .notification import Notification, deliver
@@ -60,6 +67,8 @@ def _dispatch_method(
         "stats.get": _stats_get,
         "events.snapshot": _events_snapshot,
         "notification.show": _notification_show,
+        "layout.template.list": _layout_template_list,
+        "layout.template.apply": _layout_template_apply,
         "workspace.create": _workspace_create,
         "workspace.get": _workspace_get,
         "workspace.list": _workspace_list,
@@ -195,6 +204,39 @@ def _notification_show(_state: AppState, params: dict[str, Any], _processes: Ter
     )
     delivered = deliver(notification, load_config().ui.toast.delivery)
     return {"type": "notification_shown", "title": notification.title, "delivered": delivered}
+
+
+def _layout_template_list(
+    _state: AppState, _params: dict[str, Any], _processes: TerminalManager | None
+) -> dict[str, Any]:
+    return {"type": "layout_template_list", "templates": layout_template_records()}
+
+
+def _layout_template_apply(
+    state: AppState, params: dict[str, Any], _processes: TerminalManager | None
+) -> dict[str, Any]:
+    template_id = _required(params, "template")
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    tab = state.require_tab(workspace.id, str(tab_id)) if tab_id else workspace.focused_tab
+    if tab is None:
+        raise ValueError("workspace has no tab for layout template")
+    template = layout_template_record(template_id)
+    while len(tab.panes) < int(template["pane_count"]):
+        state.create_pane(workspace.id, tab.id, title="pane")
+    pane_ids = [pane.id for pane in tab.panes]
+    layout = build_template_layout(template_id, pane_ids)
+    tab.layout = layout.to_dict()
+    tab.focused_pane_id = layout.focus
+    return {
+        "type": "layout_template_applied",
+        "template": template,
+        "workspace_id": workspace.id,
+        "tab_id": tab.id,
+        "pane_count": len(tab.panes),
+        "layout": tab.layout,
+    }
 
 
 def _workspace_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:
