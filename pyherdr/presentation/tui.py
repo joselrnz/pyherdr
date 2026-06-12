@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -2560,6 +2562,9 @@ class PyHerdrTui(App):
         self._pane_id: str | None = None
         self._terminal_versions: dict[str, int] = {}
         self._terminal_metadata: dict[str, dict[str, bool]] = {}
+        self._terminal_input: queue.Queue[tuple[str, str, str]] = queue.Queue()
+        self._terminal_input_lock = threading.Lock()
+        self._terminal_input_started = False
         self._sidebar_compact = False
         self._prefix = False
         self._zoom = False
@@ -2701,13 +2706,61 @@ class PyHerdrTui(App):
             elif self._pane_id:
                 char = event.character
                 if char is not None and char.isprintable():
-                    self._client.send_text(self._pane_id, char)
+                    self._queue_terminal_input("text", self._pane_id, char)
                 else:
-                    self._client.send_key(self._pane_id, event.key)
+                    self._queue_terminal_input("key", self._pane_id, event.key)
         except Exception:
             self._prefix = False
         event.stop()
         event.prevent_default()
+
+    def _queue_terminal_input(self, kind: str, pane_id: str, payload: str) -> None:
+        self._ensure_terminal_input_worker()
+        self._terminal_input.put((kind, pane_id, payload))
+
+    def _ensure_terminal_input_worker(self) -> None:
+        with self._terminal_input_lock:
+            if self._terminal_input_started:
+                return
+            self._terminal_input_started = True
+            threading.Thread(target=self._terminal_input_worker, name="pyherdr-terminal-input", daemon=True).start()
+
+    def _terminal_input_worker(self) -> None:
+        pending: tuple[str, str, str] | None = None
+        while True:
+            if pending is None:
+                item = self._terminal_input.get()
+            else:
+                item = pending
+                pending = None
+            kind, pane_id, payload = item
+            try:
+                if kind == "text":
+                    payload, pending = self._coalesced_terminal_text(pane_id, payload)
+                    self._client.send_text(pane_id, payload)
+                else:
+                    self._client.send_key(pane_id, payload)
+            except Exception:
+                pass
+            finally:
+                self._terminal_input.task_done()
+
+    def _coalesced_terminal_text(
+        self, pane_id: str, text: str
+    ) -> tuple[str, tuple[str, str, str] | None]:
+        # Give a burst of typed/pasted printable characters a tiny window to
+        # batch into one socket request, while staying below human-visible lag.
+        time.sleep(0.005)
+        while True:
+            try:
+                kind, next_pane_id, payload = self._terminal_input.get_nowait()
+            except queue.Empty:
+                return text, None
+            if kind == "text" and next_pane_id == pane_id:
+                text += payload
+                self._terminal_input.task_done()
+                continue
+            return text, (kind, next_pane_id, payload)
 
     def _run_prefix_action(self, key: str, character: str | None) -> None:
         command = self._commands.get(character or "") or self._commands.get(key)

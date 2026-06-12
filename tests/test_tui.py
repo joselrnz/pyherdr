@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 import unittest
 
 from pyherdr.presentation.tui import (
@@ -2029,8 +2031,40 @@ search_roots = ["{configured.as_posix()}"]
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("a")
-            await pilot.pause()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if ("1-1", "a") in client.sent_text:
+                    break
             self.assertIn(("1-1", "a"), client.sent_text)
+
+    async def test_terminal_input_does_not_block_key_handler(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingInputClient(FakeClient):
+            def send_text(self, pane_id: str, text: str) -> None:
+                started.set()
+                release.wait(5)
+                super().send_text(pane_id, text)
+
+        client = BlockingInputClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("a")
+            self.assertTrue(started.wait(1))
+
+            before = time.perf_counter()
+            await pilot.press("b")
+            self.assertLess(time.perf_counter() - before, 0.5)
+
+            release.set()
+            for _ in range(30):
+                await pilot.pause(0.05)
+                if ("1-1", "b") in client.sent_text:
+                    break
+            self.assertIn(("1-1", "a"), client.sent_text)
+            self.assertIn(("1-1", "b"), client.sent_text)
 
     async def test_clicking_plus_creates_a_tab(self):
         client = FakeClient()
