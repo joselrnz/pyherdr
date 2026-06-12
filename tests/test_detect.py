@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 
 from pyherdr.detect import (
     Agent,
@@ -13,6 +15,7 @@ IDLE = AgentStatus.IDLE
 WORKING = AgentStatus.WORKING
 BLOCKED = AgentStatus.BLOCKED
 UNKNOWN = AgentStatus.UNKNOWN
+FIXTURES = Path(__file__).parent / "fixtures" / "detect"
 
 
 def claude_prompt_box(above: str) -> str:
@@ -41,6 +44,18 @@ class IdentifyAgentTests(unittest.TestCase):
 
 
 class SimpleAgentTests(unittest.TestCase):
+    def test_transcript_fixtures_detect_expected_agent_state(self):
+        manifest = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))
+        for case in manifest:
+            with self.subTest(case=case["name"]):
+                agent = Agent(case["agent"])
+                content = (FIXTURES / case["transcript"]).read_text(encoding="utf-8")
+                detection = detect(agent, content)
+                self.assertEqual(detection.state, AgentStatus(case["state"]))
+                for flag in ("visible_blocker", "visible_idle", "visible_working", "skip_state_update"):
+                    if flag in case:
+                        self.assertEqual(getattr(detection, flag), bool(case[flag]), flag)
+
     def test_pi(self):
         self.assertEqual(detect_state(Agent.PI, "Working..."), WORKING)
         self.assertEqual(detect_state(Agent.PI, "$ "), IDLE)

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "codex_working_status_at_prompt",
+    "agent": "codex",
+    "state": "working",
+    "visible_working": true,
+    "transcript": "codex_working_status.txt"
+  },
+  {
+    "name": "codex_blocked_confirmation",
+    "agent": "codex",
+    "state": "blocked",
+    "visible_blocker": true,
+    "transcript": "codex_blocked_confirmation.txt"
+  },
+  {
+    "name": "claude_idle_prompt_box",
+    "agent": "claude",
+    "state": "idle",
+    "visible_idle": true,
+    "transcript": "claude_idle_prompt_box.txt"
+  },
+  {
+    "name": "claude_working_shell_still_running",
+    "agent": "claude",
+    "state": "working",
+    "visible_working": true,
+    "transcript": "claude_working_shell.txt"
+  }
+]

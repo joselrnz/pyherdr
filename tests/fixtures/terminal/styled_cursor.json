@@ -1,0 +1,8 @@
+{
+  "rows": 3,
+  "cols": 18,
+  "feed": "plain\r\n\u001b[31mred\u001b[0m normal\r\nprompt> ",
+  "display": ["plain", "red normal", "prompt>"],
+  "snapshot": ["plain", "red normal", "prompt>"],
+  "styled_contains": ["\u001b[0;31mred", "\u001b[0;7m"]
+}

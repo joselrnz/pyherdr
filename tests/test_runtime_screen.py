@@ -1,9 +1,37 @@
+import json
 import unittest
+from pathlib import Path
 
 from pyherdr.runtime import TerminalScreen
 
+FIXTURES = Path(__file__).parent / "fixtures" / "terminal"
+
 
 class TerminalScreenTests(unittest.TestCase):
+    def test_terminal_rendering_fixture_preserves_style_and_cursor(self):
+        fixture = json.loads((FIXTURES / "styled_cursor.json").read_text(encoding="utf-8"))
+        screen = TerminalScreen(rows=fixture["rows"], cols=fixture["cols"])
+
+        screen.feed(fixture["feed"])
+
+        self.assertEqual(screen.display(), fixture["display"])
+        self.assertEqual(screen.snapshot(), fixture["snapshot"])
+        rendered = screen.render_styled(cursor=True)
+        for needle in fixture["styled_contains"]:
+            self.assertIn(needle, rendered)
+
+    def test_terminal_scrollback_fixture_preserves_viewport(self):
+        fixture = json.loads((FIXTURES / "scrollback_viewport.json").read_text(encoding="utf-8"))
+        screen = TerminalScreen(rows=fixture["rows"], cols=fixture["cols"])
+
+        screen.feed(fixture["feed"])
+        screen.scroll(fixture["scroll"])
+
+        self.assertEqual(screen.display(), fixture["display"])
+        viewport = screen.viewport()
+        for key, value in fixture["viewport"].items():
+            self.assertEqual(viewport[key], value)
+
     def test_feed_renders_lines(self):
         screen = TerminalScreen(rows=5, cols=20)
         screen.feed("hello\r\nworld")

@@ -1,0 +1,6 @@
+• Ran git status --short
+  └ M pyherdr/presentation/tui.py
+
+• Working (17s • esc to interrupt)
+
+› Implement the next fixture coverage slice

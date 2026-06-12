@@ -1,0 +1,12 @@
+{
+  "rows": 3,
+  "cols": 16,
+  "feed": "line0\r\nline1\r\nline2\r\nline3\r\nline4\r\n",
+  "scroll": "top",
+  "display": ["line0", "line1", "line2"],
+  "viewport": {
+    "at_top": true,
+    "at_bottom": false,
+    "offset_from_bottom": 3
+  }
+}
