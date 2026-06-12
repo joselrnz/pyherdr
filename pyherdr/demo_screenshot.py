@@ -269,7 +269,7 @@ class DemoScreenshotClient:
     def create_pane(self, title: str = "pane") -> dict[str, Any]:
         return {"result": {"pane": {"pane_id": "new-pane"}}}
 
-    def split_pane(self, direction: str = "horizontal") -> dict[str, Any]:
+    def split_pane(self, direction: str = "horizontal", pane_id: str | None = None) -> dict[str, Any]:
         return {"result": {"pane": {"pane_id": "new-pane"}}}
 
     def set_layout(self, layout: dict[str, Any]) -> dict[str, Any]:

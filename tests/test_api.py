@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from pyherdr.api import dispatch
+from pyherdr.layout import Direction, PaneNode, SplitNode, TileLayout
 from pyherdr.models import AgentStatus, AppState
 from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents, remove_workspace_recent
 
@@ -132,6 +133,37 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(processes.scrolled, [(pane.id, "top")])
         self.assertEqual(response["result"]["direction"], "top")
         self.assertEqual(response["result"]["viewport"]["offset_from_bottom"], 3)
+
+    def test_pane_split_can_target_nonfocused_pane(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        tab = state.focused_workspace.focused_tab
+        first = tab.focused_pane
+        second = state.create_pane(state.focused_workspace.id, tab.id, "side")
+        tab.focused_pane_id = first.id
+        layout = TileLayout(PaneNode(first.id), first.id)
+        layout.split_pane(first.id, second.id, Direction.HORIZONTAL)
+        layout.focus = first.id
+        tab.layout = layout.to_dict()
+
+        response = dispatch(
+            state,
+            {
+                "id": "split",
+                "method": "pane.split",
+                "params": {"pane_id": second.id, "direction": "vertical"},
+            },
+        )
+
+        new_id = response["result"]["pane"]["pane_id"]
+        updated = TileLayout.from_dict(tab.layout)
+        self.assertEqual(tab.focused_pane_id, new_id)
+        self.assertIsInstance(updated.root, SplitNode)
+        self.assertIsInstance(updated.root.second, SplitNode)
+        self.assertEqual(updated.root.second.direction, Direction.VERTICAL)
+        self.assertIsInstance(updated.root.second.first, PaneNode)
+        self.assertIsInstance(updated.root.second.second, PaneNode)
+        self.assertEqual(updated.root.second.first.pane_id, second.id)
+        self.assertEqual(updated.root.second.second.pane_id, new_id)
 
     def test_pane_read_includes_terminal_metadata(self):
         state = AppState.bootstrap(cwd="C:/work")

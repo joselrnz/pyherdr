@@ -55,8 +55,8 @@ class PaneClient(Protocol):
         """Create a new pane in the focused tab."""
         ...
 
-    def split_pane(self, direction: str = "horizontal") -> dict[str, Any]:
-        """Split the focused pane ('horizontal' = side-by-side, 'vertical' = stacked)."""
+    def split_pane(self, direction: str = "horizontal", pane_id: str | None = None) -> dict[str, Any]:
+        """Split a pane; defaults to the focused pane when no pane id is provided."""
         ...
 
     def set_layout(self, layout: dict[str, Any]) -> dict[str, Any]:
@@ -185,8 +185,11 @@ class ServerClient:
     def create_pane(self, title: str = "pane") -> dict[str, Any]:
         return self._request("pane.create", title=title)
 
-    def split_pane(self, direction: str = "horizontal") -> dict[str, Any]:
-        return self._request("pane.split", direction=direction)
+    def split_pane(self, direction: str = "horizontal", pane_id: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"direction": direction}
+        if pane_id:
+            params["pane_id"] = pane_id
+        return self._request("pane.split", **params)
 
     def set_layout(self, layout: dict[str, Any]) -> dict[str, Any]:
         return self._request("pane.set_layout", layout=layout)

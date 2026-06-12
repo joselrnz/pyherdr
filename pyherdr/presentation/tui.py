@@ -2904,9 +2904,9 @@ class PyHerdrTui(App):
             self._client.create_tab()
             self.run_worker(self._reload_focus_last_tab(), exclusive=True)
         elif action == "new_pane":
-            self.run_worker(self._split("horizontal"), exclusive=True)
+            self.run_worker(self._split("horizontal", arg), exclusive=True)
         elif action == "split_down":
-            self.run_worker(self._split("vertical"), exclusive=True)
+            self.run_worker(self._split("vertical", arg), exclusive=True)
         elif action == "zoom":
             self._zoom = not self._zoom
             self.run_worker(self.reload(), exclusive=True)
@@ -2928,8 +2928,8 @@ class PyHerdrTui(App):
                 ContextMenuScreen(
                     "pane",
                     [
-                        ("split right", "new_pane", None),
-                        ("split down", "split_down", None),
+                        ("split right", "new_pane", arg),
+                        ("split down", "split_down", arg),
                         ("zoom", "zoom", None),
                         ("copy mode", "copy_mode", arg),
                         ("copy output", "copy_output", arg),
@@ -3169,8 +3169,8 @@ class PyHerdrTui(App):
             ContextMenuScreen(
                 "pane",
                 [
-                    ("split right", "new_pane", None),
-                    ("split down", "split_down", None),
+                    ("split right", "new_pane", pane_id),
+                    ("split down", "split_down", pane_id),
                     ("zoom", "zoom", None),
                     ("scroll up", "pane_scroll_up", pane_id),
                     ("scroll down", "pane_scroll_down", pane_id),
@@ -3702,14 +3702,15 @@ class PyHerdrTui(App):
         box.styles.height = "1fr"
         return box
 
-    async def _split(self, direction: str) -> None:
+    async def _split(self, direction: str, pane_id: str | None = None) -> None:
         try:
-            response = self._client.split_pane(direction)
+            response = self._client.split_pane(direction, pane_id)
         except Exception:
             return
         new_id = None
         if isinstance(response, dict):
-            new_id = response.get("result", {}).get("pane", {}).get("pane_id")
+            pane = response.get("result", {}).get("pane", {})
+            new_id = pane.get("pane_id") or pane.get("id")
         await self.reload()
         if new_id and new_id in {str(pane["id"]) for pane in self._focused_panes()}:
             self._pane_id = new_id

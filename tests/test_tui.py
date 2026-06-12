@@ -81,6 +81,7 @@ class FakeClient:
         self.scrolled: list[tuple[str, str]] = []
         self.moved: list[tuple[str, str]] = []
         self.moved_workspaces: list[tuple[str, str]] = []
+        self.split_targets: list[tuple[str, str | None]] = []
         self.created_workspaces: list[tuple[str, str]] = []
         self.focused_workspaces: list[str] = []
         self.focused_tabs: list[str] = []
@@ -125,8 +126,9 @@ class FakeClient:
         self.panes += 1
         return {"result": {"pane": {"pane_id": "new-pane"}}}
 
-    def split_pane(self, direction: str = "horizontal") -> dict:
+    def split_pane(self, direction: str = "horizontal", pane_id: str | None = None) -> dict:
         self.splits.append(direction)
+        self.split_targets.append((direction, pane_id))
         return {"result": {"pane": {"pane_id": "new-pane"}}}
 
     def set_layout(self, layout: dict) -> dict:
@@ -1587,6 +1589,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.pause()
             self.assertEqual(client.splits, ["horizontal"])
+            self.assertEqual(client.split_targets, [("horizontal", "1-2")])
 
     async def test_drag_resize_persists_layout(self):
         client = FakeClient()

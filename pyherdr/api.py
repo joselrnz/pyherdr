@@ -437,8 +437,12 @@ def _pane_split(state: AppState, params: dict[str, Any], _processes: TerminalMan
     except ValueError:
         direction = Direction.HORIZONTAL
     ratio = float(params.get("ratio") or 0.5)
-    target = tab.focused_pane_id
-    follow = next((pane.cwd for pane in tab.panes if pane.id == target), workspace.cwd)
+    requested_target = params.get("pane_id")
+    target = str(requested_target) if requested_target else tab.focused_pane_id
+    target_pane = next((pane for pane in tab.panes if pane.id == target), None)
+    if target and target_pane is None:
+        raise ValueError(f"pane not found in tab: {target}")
+    follow = target_pane.cwd if target_pane is not None else workspace.cwd
     layout = _ensure_layout(tab)
     pane = state.create_pane(workspace.id, tab.id, title=str(params.get("title") or "pane"))
     pane.cwd = _resolve_new_cwd(follow)
