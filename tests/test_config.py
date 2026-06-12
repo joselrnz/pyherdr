@@ -71,6 +71,23 @@ sidebar_max_width = 50
         self.assertEqual(config.ui.sidebar_min_width, 20)
         self.assertEqual(config.ui.sidebar_max_width, 50)
 
+    def test_pane_appearance_config_loads_from_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                """
+[ui]
+pane_separator = "accent"
+pane_border = "visible"
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.ui.pane_separator, "accent")
+        self.assertEqual(config.ui.pane_border, "visible")
+
 
 if __name__ == "__main__":
     unittest.main()

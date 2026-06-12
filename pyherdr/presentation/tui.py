@@ -378,7 +378,7 @@ def _help_text(palette: Palette) -> Text:
     group("global")
     row(":", "command palette (run anything)")
     row("g", "jump to pane")
-    row("s", "theme / settings")
+    row("s", "theme / appearance settings")
     row("F", "command fan-out")
     row("b", "toggle sidebar")
     row("d", "detach (panes keep running)")
@@ -2755,10 +2755,10 @@ class SplitDivider(Static):
     """A draggable divider between two split panes (drag to resize)."""
 
     DEFAULT_CSS = """
-    SplitDivider { background: $ph-base; }
+    SplitDivider { background: $ph-pane-separator; }
     SplitDivider.divider-h { width: 1; height: 1fr; }
     SplitDivider.divider-v { width: 1fr; height: 1; }
-    SplitDivider:hover { background: $ph-surface0; }
+    SplitDivider:hover { background: $ph-pane-separator-hover; }
     """
 
     def __init__(self, direction: Direction, path: tuple[bool, ...]) -> None:
@@ -2932,12 +2932,12 @@ class PyHerdrTui(App):
     PaneView {
         width: 1fr;
         height: 1fr;
-        border: round $ph-overlay0;
-        border-title-color: $ph-blue;
+        border: round $ph-pane-border;
+        border-title-color: $ph-pane-border-title;
         padding: 0 1;
         background: $ph-base;
     }
-    PaneView.active { border: round $ph-accent; border-title-color: $ph-accent; }
+    PaneView.active { border: round $ph-pane-active-border; border-title-color: $ph-pane-active-border; }
     #footer { dock: bottom; height: 2; }
     #actionbar {
         height: 1;
@@ -2957,9 +2957,28 @@ class PyHerdrTui(App):
         requested = int(self._config.ui.sidebar_width)
         return max(minimum, min(maximum, requested))
 
+    def _appearance_color(self, value: object, *, active: bool = False) -> str:
+        style = str(value or "subtle").lower()
+        if style == "accent":
+            return self._palette.accent
+        if style == "visible":
+            return self._palette.accent if active else self._palette.overlay0
+        return self._palette.accent if active else self._palette.surface0
+
+    def _separator_hover_color(self) -> str:
+        style = str(self._config.ui.pane_separator or "subtle").lower()
+        if style == "accent":
+            return self._palette.blue
+        if style == "visible":
+            return self._palette.accent
+        return self._palette.overlay0
+
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
         palette = self._palette
+        pane_border = self._appearance_color(self._config.ui.pane_border)
+        active_pane_border = self._appearance_color(self._config.ui.pane_border, active=True)
+        pane_separator = self._appearance_color(self._config.ui.pane_separator)
         variables.update(
             {
                 "ph-base": palette.panel_bg,
@@ -2973,6 +2992,11 @@ class PyHerdrTui(App):
                 "ph-red": palette.red,
                 "ph-green": palette.green,
                 "ph-sidebar-width": str(self._sidebar_width_columns()),
+                "ph-pane-border": pane_border,
+                "ph-pane-border-title": palette.blue if pane_border == palette.surface0 else pane_border,
+                "ph-pane-active-border": active_pane_border,
+                "ph-pane-separator": pane_separator,
+                "ph-pane-separator-hover": self._separator_hover_color(),
             }
         )
         return variables
@@ -3443,7 +3467,7 @@ class PyHerdrTui(App):
         ("Move workspace up", "move_workspace_up"),
         ("Move workspace down", "move_workspace_down"),
         ("New terminal (pick shell)…", "open_shell_picker"),
-        ("Change theme…", "settings"),
+        ("Theme and appearance settings...", "settings"),
         ("Jump to pane…", "goto"),
         ("Pane menu…", "pane_menu"),
         ("Resource monitor (CPU/RAM)…", "resource_monitor"),

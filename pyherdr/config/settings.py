@@ -67,6 +67,12 @@ class AgentPanelScope(StrEnum):
     ALL = "all"
 
 
+class PaneAppearance(StrEnum):
+    SUBTLE = "subtle"
+    VISIBLE = "visible"
+    ACCENT = "accent"
+
+
 class ShellMode(StrEnum):
     AUTO = "auto"
     LOGIN = "login"
@@ -142,6 +148,8 @@ class UiConfig(_Section):
     mouse_scroll_lines: int = DEFAULT_MOUSE_SCROLL_LINES
     confirm_close: bool = True
     prompt_new_tab_name: bool = True
+    pane_separator: PaneAppearance = PaneAppearance.SUBTLE
+    pane_border: PaneAppearance = PaneAppearance.SUBTLE
     show_agent_labels_on_pane_borders: bool = False
     agent_panel_scope: AgentPanelScope = AgentPanelScope.CURRENT
     accent: str = "#f5c2e7"

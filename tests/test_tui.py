@@ -24,6 +24,7 @@ from pyherdr.presentation.tui import (
     UrlPickerScreen,
     WorkflowScreen,
     WorktreeScreen,
+    _help_text,
 )
 from pyherdr.workflow import new_event
 from pyherdr.workspace_recents import load_workspace_recents, record_workspace_recent
@@ -1627,6 +1628,23 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app = PyHerdrTui(client=FakeClient(), poll_interval=100)
 
         self.assertEqual(app.get_css_variables()["ph-sidebar-width"], "46")
+
+    def test_pane_appearance_css_variables_follow_config(self):
+        config = Config(ui=UiConfig(pane_separator="accent", pane_border="visible"))
+        with patch("pyherdr.presentation.tui.load_config", return_value=config):
+            app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+
+        variables = app.get_css_variables()
+        self.assertEqual(variables["ph-pane-separator"], app._palette.accent)
+        self.assertEqual(variables["ph-pane-border"], app._palette.overlay0)
+        self.assertEqual(variables["ph-pane-active-border"], app._palette.accent)
+
+    def test_help_and_palette_surface_appearance_settings(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+
+        self.assertIn("appearance settings", _help_text(app._palette).plain)
+        labels = [label for label, _action, _custom in app._palette_entries()]
+        self.assertIn("Theme and appearance settings...", labels)
 
     async def test_workflow_view_opens_graph_and_log_screen(self):
         event = new_event(
