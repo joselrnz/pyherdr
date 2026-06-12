@@ -2469,10 +2469,10 @@ class SplitDivider(Static):
     """A draggable divider between two split panes (drag to resize)."""
 
     DEFAULT_CSS = """
-    SplitDivider { background: $ph-overlay0; }
+    SplitDivider { background: $ph-base; }
     SplitDivider.divider-h { width: 1; height: 1fr; }
     SplitDivider.divider-v { width: 1fr; height: 1; }
-    SplitDivider:hover { background: $ph-accent; }
+    SplitDivider:hover { background: $ph-surface0; }
     """
 
     def __init__(self, direction: Direction, path: tuple[bool, ...]) -> None:
