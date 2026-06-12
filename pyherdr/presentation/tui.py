@@ -74,6 +74,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "T": "rename_tab",
     "N": "new_workspace",
     "F": "fanout",
+    "b": "toggle_sidebar",
     "w": "next_workspace",
     "g": "goto",
     ":": "palette",
@@ -356,6 +357,7 @@ def _help_text(palette: Palette) -> Text:
     row("g", "jump to pane")
     row("s", "theme / settings")
     row("F", "command fan-out")
+    row("b", "toggle sidebar")
     row("d", "detach (panes keep running)")
     row("?", "this help")
     row("q", "quit")
@@ -2558,6 +2560,7 @@ class PyHerdrTui(App):
         self._pane_id: str | None = None
         self._terminal_versions: dict[str, int] = {}
         self._terminal_metadata: dict[str, dict[str, bool]] = {}
+        self._sidebar_compact = False
         self._prefix = False
         self._zoom = False
         self._resize = False
@@ -2592,10 +2595,21 @@ class PyHerdrTui(App):
         border-title-color: $ph-accent;
         padding: 0 1;
     }
+    #nav.compact {
+        width: 4;
+        padding: 0 0;
+    }
     .attention { width: 1fr; padding: 0 0 1 0; }
     .wsrow { width: 1fr; height: auto; padding: 0 0 1 0; }
     .wsrow:hover { background: $ph-surface0; }
     .wsrow.active { background: $ph-surface0; }
+    .wscompact { width: 1fr; height: 1; content-align: center middle; }
+    .wscompact:hover { background: $ph-surface0; }
+    .wscompact.active { background: $ph-surface0; }
+    .navtoggle { width: 1fr; height: 1; content-align: center middle; color: $ph-accent; }
+    .navtoggle:hover { background: $ph-surface0; }
+    .compact-attention { width: 1fr; padding: 1 0; content-align: center middle; }
+    .compact-agents { width: 1fr; padding: 1 0 0 0; content-align: center middle; }
     .navhdr { width: 1fr; color: $ph-subtext0; padding: 1 0 0 0; }
     .navtop { width: 1fr; color: $ph-subtext0; }
     .navgap { width: 1fr; height: 1; }
@@ -2733,6 +2747,10 @@ class PyHerdrTui(App):
             self.run_worker(self.reload(), exclusive=True)
         elif action == "settings":
             self.push_screen(ThemeScreen(THEME_NAMES, self._theme_name))
+        elif action == "toggle_sidebar":
+            self._sidebar_compact = not self._sidebar_compact
+            self.run_worker(self._refresh_sidebar(), exclusive=True)
+            self._refresh_statusbar()
         elif action == "goto":
             rows = self._navigator_rows()
             if rows:
@@ -2894,6 +2912,7 @@ class PyHerdrTui(App):
         elif action in (
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "copy_mode",
+            "toggle_sidebar",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
             self._run_named_action(action)
@@ -3019,6 +3038,7 @@ class PyHerdrTui(App):
         ("Resource monitor (CPU/RAM)…", "resource_monitor"),
         ("Workflow graph + log…", "workflow_view"),
         ("Command fan-out…", "fanout"),
+        ("Toggle sidebar", "toggle_sidebar"),
         ("Keybindings help", "help"),
         ("Detach (keep panes running)", "detach"),
         ("Quit", "quit"),
@@ -3632,7 +3652,12 @@ class PyHerdrTui(App):
     async def _refresh_sidebar(self) -> None:
         nav = self.query_one("#nav", Vertical)
         await nav.remove_children()
+        nav.set_class(self._sidebar_compact, "compact")
+        if self._sidebar_compact:
+            await nav.mount(*self._compact_sidebar_widgets())
+            return
         widgets: list[Static] = [
+            Clickable("◄", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
             Static(self._attention_text(), id="attention", classes="attention"),
             Static(Text("spaces", style=self._palette.subtext0), classes="navtop"),
         ]
@@ -3655,6 +3680,27 @@ class PyHerdrTui(App):
         widgets.append(Clickable(self._workflow_text(), "workflow_view", id="workflow", classes="workflow"))
         widgets.append(Static(self._agents_text(), id="agents", classes="agents"))
         await nav.mount(*widgets)
+
+    def _compact_sidebar_widgets(self) -> list[Static]:
+        widgets: list[Static] = [
+            Clickable("►", "toggle_sidebar", id="sidebar-toggle", classes="navtoggle"),
+            Static(self._compact_attention_text(), id="attention", classes="compact-attention"),
+        ]
+        for index, workspace in enumerate(self._workspaces(), start=1):
+            ws_id = str(workspace.get("id"))
+            active = ws_id == self._workspace_id
+            widgets.append(
+                Clickable(
+                    self._compact_workspace_row_text(index, workspace, active),
+                    "switch_workspace",
+                    ws_id,
+                    ctx_action="ctx_workspace",
+                    id=f"wsrow-{ws_id}",
+                    classes="wscompact active" if active else "wscompact",
+                )
+            )
+        widgets.append(Static(self._compact_agents_text(), id="agents", classes="compact-agents"))
+        return widgets
 
     @staticmethod
     def _workspace_panes(workspace: dict[str, Any]) -> list[dict[str, Any]]:
@@ -3704,6 +3750,24 @@ class PyHerdrTui(App):
         text.append(f"agents {agents}  panes {len(panes)}", style=self._palette.overlay0)
         return text
 
+    def _compact_attention_text(self) -> Text:
+        counts = self._status_counts(self._all_panes())
+        active_count = counts["blocked"] or counts["working"] or counts["done"]
+        if counts["blocked"]:
+            status = "blocked"
+        elif counts["working"]:
+            status = "working"
+        elif counts["done"]:
+            status = "done"
+        else:
+            status = "idle"
+        glyph, color = self._dot(status)
+        text = Text()
+        text.append(glyph, style=color)
+        text.append("\n")
+        text.append(str(active_count), style=color if active_count else self._palette.overlay0)
+        return text
+
     def _workspace_row_text(self, index: int, workspace: dict[str, Any], active: bool) -> Text:
         ws_id = str(workspace.get("id"))
         panes = self._workspace_panes(workspace)
@@ -3743,6 +3807,15 @@ class PyHerdrTui(App):
             row.append("empty", style=self._palette.overlay0)
         return row
 
+    def _compact_workspace_row_text(self, index: int, workspace: dict[str, Any], active: bool) -> Text:
+        panes = self._workspace_panes(workspace)
+        glyph, color = self._dot(_rollup([str(pane.get("status", "unknown")) for pane in panes]))
+        text = Text()
+        text.append("▌" if active else " ", style=self._palette.accent if active else self._palette.overlay0)
+        text.append(str(index), style=f"bold {self._palette.accent}" if active else self._palette.subtext0)
+        text.append(glyph, style=color)
+        return text
+
     def _workflow_text(self) -> Text:
         text = Text("workflow", style=self._palette.subtext0)
         text.append("\n◎ calls", style=self._palette.blue)
@@ -3773,6 +3846,21 @@ class PyHerdrTui(App):
                         f"\n  {workspace.get('label', 'ws')} › {tab.get('label', 'tab')}",
                         style=self._palette.overlay0,
                     )
+        return text
+
+    def _compact_agents_text(self) -> Text:
+        panes = [pane for pane in self._all_panes() if pane.get("agent")]
+        working = sum(1 for pane in panes if str(pane.get("status", "unknown")) == "working")
+        blocked = sum(1 for pane in panes if str(pane.get("status", "unknown")) == "blocked")
+        status = "blocked" if blocked else ("working" if working else ("idle" if panes else "unknown"))
+        if status == "working":
+            glyph, color = _SPINNER[self._spin % len(_SPINNER)], self._palette.yellow
+        else:
+            glyph, color = self._dot(status)
+        text = Text()
+        text.append(glyph, style=color)
+        text.append("\n")
+        text.append(str(len(panes)), style=self._palette.subtext0)
         return text
 
     def _has_working_agent(self) -> bool:

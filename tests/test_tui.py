@@ -1126,11 +1126,17 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ghostc-plugin", self._screen_text(app.screen, "#dir-list"))
 
             app.screen.on_key(self._key_event("delete"))
-            await pilot.pause()
+            footer = ""
+            text = ""
+            for _ in range(10):
+                await pilot.pause(0.1)
+                text = self._screen_text(app.screen, "#dir-list")
+                footer = self._widget_text(app.screen, "#dir-foot")
+                if "ghostc-plugin" not in text and "hidden stale root" in footer:
+                    break
 
-            text = self._screen_text(app.screen, "#dir-list")
             self.assertNotIn("ghostc-plugin", text)
-            self.assertIn("hidden stale root", self._widget_text(app.screen, "#dir-foot"))
+            self.assertIn("hidden stale root", footer)
 
     async def test_dir_picker_search_delete_removes_stale_recent_from_recents_file(self):
         import tempfile
@@ -1214,10 +1220,10 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             app.screen.on_key(self._key_event("ctrl+f"))
             await app.screen.on_input_changed(self._changed_event("alpha"))
             text = ""
-            for _ in range(10):
+            for _ in range(30):
                 await pilot.pause(0.1)
                 text = self._screen_text(app.screen, "#dir-list")
-                if "searching roots" not in text:
+                if "alpha-00" in text:
                     break
             self.assertIn("alpha-00", text)
 
@@ -1360,6 +1366,43 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             workflow = app._workflow_text().plain
             self.assertIn("workflow", workflow)
             self.assertIn("calls  logs  graph", workflow)
+
+    async def test_compact_sidebar_preserves_attention_and_workspace_status(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+
+            attention = app._compact_attention_text().plain
+            self.assertIn("●", attention)
+            self.assertIn("1", attention)
+
+            row = app._compact_workspace_row_text(1, STATE["workspaces"][0], True).plain
+            self.assertIn("▌", row)
+            self.assertIn("1", row)
+            self.assertIn("●", row)
+
+    async def test_prefix_b_toggles_compact_sidebar(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            nav = app.query_one("#nav")
+            self.assertFalse(nav.has_class("compact"))
+
+            await pilot.press("ctrl+b")
+            await pilot.press("b")
+            await pilot.pause()
+
+            self.assertTrue(app._sidebar_compact)
+            self.assertTrue(nav.has_class("compact"))
+            self.assertIn("►", self._widget_text(app, "#sidebar-toggle"))
+
+            await pilot.press("ctrl+b")
+            await pilot.press("b")
+            await pilot.pause()
+
+            self.assertFalse(app._sidebar_compact)
+            self.assertFalse(nav.has_class("compact"))
+            self.assertIn("spaces", self._screen_text(app, "#nav"))
 
     async def test_workflow_view_opens_graph_and_log_screen(self):
         event = new_event(
