@@ -1436,6 +1436,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             attention = app._attention_text().plain
             self.assertIn("working 1", attention)
+            self.assertNotIn("⠋", attention)
             row = app._workspace_row_text(1, STATE["workspaces"][0], True).plain
             self.assertIn("1  ● main", row)
             self.assertIn("2 tabs", row)

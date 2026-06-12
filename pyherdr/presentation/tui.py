@@ -3883,7 +3883,7 @@ class PyHerdrTui(App):
                 text.append("● ", style=self._palette.red)
                 self._append_status_count(text, "blocked", counts["blocked"], self._palette.red)
             if counts["working"]:
-                text.append(f"{_SPINNER[self._spin % len(_SPINNER)]} ", style=self._palette.yellow)
+                text.append("● ", style=self._palette.yellow)
                 self._append_status_count(text, "working", counts["working"], self._palette.yellow)
             if counts["done"]:
                 text.append("✓ ", style=self._palette.green)
