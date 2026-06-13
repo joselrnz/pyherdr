@@ -27,6 +27,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "pillow>=10",
     "pydantic>=2.11,<3",
     "pyte>=0.8",
     "textual>=1.0",
@@ -66,5 +67,5 @@ warn_unused_ignores = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["pyte.*", "winpty.*", "psutil.*"]
+module = ["PIL.*", "pyte.*", "winpty.*", "psutil.*"]
 ignore_missing_imports = true

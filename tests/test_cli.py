@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pyherdr.cli import build_parser
+from pyherdr.demo_gif import render_demo_gif
 from pyherdr.demo_screenshot import render_demo_screenshot
 
 
@@ -34,6 +35,24 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "workspace-search")
+
+    def test_demo_gif_accepts_scripted_storyboard_options(self):
+        args = build_parser().parse_args(
+            [
+                "demo-gif",
+                "--output",
+                "demo.gif",
+                "--views",
+                "main,workflow",
+                "--duration-ms",
+                "250",
+            ]
+        )
+
+        self.assertEqual(args.command, "demo-gif")
+        self.assertEqual(args.output, "demo.gif")
+        self.assertEqual(args.views, "main,workflow")
+        self.assertEqual(args.duration_ms, 250)
 
     def test_agent_focus_accepts_attention_target(self):
         args = build_parser().parse_args(["agent", "focus", "--attention"])
@@ -137,6 +156,36 @@ class CliTests(unittest.TestCase):
         self.assertIn("search mode", plain)
         self.assertIn("pyherdr-operations-console", plain)
         self.assertIn("regional-command-center", plain)
+
+    def test_demo_gif_renders_animated_product_state(self):
+        import tempfile
+
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_gif(
+                Path(tmp) / "demo.gif",
+                width=480,
+                height=270,
+                duration_ms=80,
+                views=("main", "workflow"),
+            )
+            data = output.read_bytes()
+            with Image.open(output) as image:
+                frame_count = image.n_frames
+                size = image.size
+
+        self.assertTrue(data.startswith(b"GIF89a"))
+        self.assertIn(b"NETSCAPE2.0", data)
+        self.assertEqual(frame_count, 2)
+        self.assertEqual(size, (480, 270))
+
+    def test_demo_gif_rejects_unknown_views(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "unknown demo GIF view"):
+                render_demo_gif(Path(tmp) / "demo.gif", views=("main", "missing"))
 
     def test_workflow_graph_accepts_svg_output(self):
         args = build_parser().parse_args(["workflow", "graph", "--format", "svg", "--output", "graph.svg"])

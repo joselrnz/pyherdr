@@ -75,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "demo-screenshot":
         return run_demo_screenshot(args)
+    if args.command == "demo-gif":
+        return run_demo_gif(args)
     if args.command == "status":
         return print_status()
     if args.command == "session":
@@ -142,6 +144,16 @@ def build_parser() -> argparse.ArgumentParser:
         ],
         default="main",
         help="demo view to render",
+    )
+    demo_gif = sub.add_parser("demo-gif", help="render an animated GIF from deterministic demo data")
+    demo_gif.add_argument("--output", default="pyherdr-demo.gif", help="GIF file to write")
+    demo_gif.add_argument("--width", type=int, default=960, help="image width in pixels")
+    demo_gif.add_argument("--height", type=int, default=540, help="image height in pixels")
+    demo_gif.add_argument("--duration-ms", type=int, default=900, help="frame duration in milliseconds")
+    demo_gif.add_argument(
+        "--views",
+        default="main,workflow,fanout,workspace-search",
+        help="comma-separated demo views to include in the storyboard",
     )
     sub.add_parser("version", help="print version")
     sub.add_parser("status", help="show Python server and saved session status")
@@ -543,6 +555,21 @@ def run_demo_screenshot(args) -> int:
     from .demo_screenshot import render_demo_screenshot
 
     output = render_demo_screenshot(Path(args.output), width=args.width, height=args.height, view=args.view)
+    print(output)
+    return 0
+
+
+def run_demo_gif(args) -> int:
+    from .demo_gif import render_demo_gif
+
+    views = tuple(view.strip() for view in args.views.split(",") if view.strip())
+    output = render_demo_gif(
+        Path(args.output),
+        width=args.width,
+        height=args.height,
+        duration_ms=args.duration_ms,
+        views=views,
+    )
     print(output)
     return 0
 

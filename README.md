@@ -90,7 +90,7 @@ pip install pyherdr
 ```
 
 Requires **Python 3.11+**. Runtime deps install automatically: `pydantic`,
-`pyte`, `textual`, `psutil`, and `pywinpty` (Windows only).
+`pillow`, `pyte`, `textual`, `psutil`, and `pywinpty` (Windows only).
 
 ## 🚀 Quick start
 
@@ -149,6 +149,17 @@ panes and the background server, run:
 
 ```bash
 python -m pyherdr tui
+```
+
+### Reproduce the demo GIF
+
+The animated demo GIF is generated from the same deterministic PyHerdr demo
+state used by the screenshot fixtures. It is scripted release media, so it is
+repeatable and does not start live agents.
+
+```bash
+python -m pyherdr demo-gif --output pyherdr-demo.gif
+python -m pyherdr demo-gif --views main,workflow,fanout,workspace-search --output pyherdr-demo.gif
 ```
 
 ## ⌨️ Keybindings

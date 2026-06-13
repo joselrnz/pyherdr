@@ -11,6 +11,8 @@ run, configure, or rely on, not internal porting status.
 
 - Public docs decision: README plus focused `docs/*.md` pages are the canonical
   docs surface until a generated docs site is justified.
+- Scripted `pyherdr demo-gif` command for repeatable animated release media
+  generated from deterministic PyHerdr demo state.
 - Balanced README comparison for tmux, Zellij, and cmux-class agent terminals.
 - Clear package metadata for PyPI, including OS compatibility, Python support,
   project links, and typed package marker.
