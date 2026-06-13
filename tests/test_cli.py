@@ -435,10 +435,17 @@ class CliTests(unittest.TestCase):
 
     def test_profile_start_creates_and_starts_profile_panes(self):
         from pyherdr.cli import run_profile
-        from pyherdr.config import Config, ConnectionConfig, ProfileConfig, ProfilePaneConfig
+        from pyherdr.config import (
+            Config,
+            ConnectionConfig,
+            ProfileConfig,
+            ProfilePaneConfig,
+            WorkflowConfig,
+            WorkflowStepConfig,
+        )
         from pyherdr.server import ServerInfo
 
-        args = build_parser().parse_args(["profile", "start", "ops"])
+        args = build_parser().parse_args(["profile", "start", "ops", "--workflow", "health"])
         config = Config(
             connections={"prod": ConnectionConfig(host="prod.example.com", user="ops")},
             profiles={
@@ -450,6 +457,15 @@ class CliTests(unittest.TestCase):
                         ProfilePaneConfig(name="local", position="left", command="pwsh"),
                         ProfilePaneConfig(name="prod", position="right-top", connection="prod", command="uptime"),
                         ProfilePaneConfig(name="logs", position="right-bottom", command="tail -f app.log"),
+                    ],
+                )
+            },
+            workflows={
+                "health": WorkflowConfig(
+                    profile="ops",
+                    steps=[
+                        WorkflowStepConfig(pane="prod", send="systemctl status app"),
+                        WorkflowStepConfig(pane="logs", command="grep ERROR app.log", enter=False),
                     ],
                 )
             },
@@ -476,6 +492,10 @@ class CliTests(unittest.TestCase):
                 return {"result": {"pane": {"pane_id": payload["params"]["pane_id"]}, "started": True}}
             if method == "pane.set_layout":
                 return {"result": {"type": "pane_layout_set"}}
+            if method == "pane.send_text":
+                return {"result": {"type": "pane_text_sent"}}
+            if method == "pane.send_key":
+                return {"result": {"type": "pane_key_sent"}}
             raise AssertionError(method)
 
         stdout = StringIO()
@@ -499,6 +519,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(layout_root["first"]["pane_id"], "p1")
         self.assertEqual(layout_root["second"]["first"]["pane_id"], "pane-prod")
         self.assertEqual(layout_root["second"]["second"]["pane_id"], "pane-logs")
+        sent_text = [
+            (call["params"]["pane_id"], call["params"]["text"]) for call in calls if call["method"] == "pane.send_text"
+        ]
+        self.assertEqual(sent_text, [("pane-prod", "systemctl status app"), ("pane-logs", "grep ERROR app.log")])
+        sent_keys = [
+            (call["params"]["pane_id"], call["params"]["key"]) for call in calls if call["method"] == "pane.send_key"
+        ]
+        self.assertEqual(sent_keys, [("pane-prod", "enter")])
+        self.assertEqual(
+            payload["workflow_execution"]["steps"],
+            [
+                {"pane": "prod", "pane_id": "pane-prod", "text": "systemctl status app", "enter": True},
+                {"pane": "logs", "pane_id": "pane-logs", "text": "grep ERROR app.log", "enter": False},
+            ],
+        )
 
     def test_pane_capture_parses_lines_styled_and_text_flags(self):
         args = build_parser().parse_args(["pane", "capture", "1-1", "--lines", "50", "--styled", "--text"])

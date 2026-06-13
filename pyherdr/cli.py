@@ -816,6 +816,10 @@ def run_profile(args) -> int:
             )
             if "error" in layout_response:
                 return print_response(layout_response)
+        workflow_execution = _execute_profile_workflow(info, plan.get("workflow"), pane_ids_by_name)
+        if workflow_execution.get("error"):
+            print(json.dumps({"type": "profile_start", "ok": False, "error": workflow_execution["error"]}, indent=2))
+            return 1
         print(
             json.dumps(
                 {
@@ -827,6 +831,7 @@ def run_profile(args) -> int:
                     "layout_tree": applied_layout,
                     "panes": started_panes,
                     "workflow": plan["workflow"],
+                    "workflow_execution": workflow_execution,
                 },
                 indent=2,
             )
@@ -842,6 +847,39 @@ def _replace_layout_pane_ids(layout: dict[str, Any], pane_ids_by_name: dict[str,
         return {**node, "first": replace_node(node["first"]), "second": replace_node(node["second"])}
 
     return {**layout, "root": replace_node(layout["root"])}
+
+
+def _execute_profile_workflow(
+    info: ServerInfo,
+    workflow: dict[str, Any] | None,
+    pane_ids_by_name: dict[str, str],
+) -> dict:
+    if not workflow:
+        return {"executed": False, "steps": []}
+    executed: list[dict[str, Any]] = []
+    for step in workflow.get("steps", []):
+        pane_name = str(step.get("pane", ""))
+        pane_id = pane_ids_by_name.get(pane_name)
+        if not pane_id:
+            return {"executed": False, "steps": executed, "error": f"workflow pane not started: {pane_name}"}
+        text = str(step.get("send") or step.get("command") or "")
+        enter = bool(step.get("enter", True))
+        if text:
+            text_response = request(
+                info,
+                {"id": "profile", "method": "pane.send_text", "params": {"pane_id": pane_id, "text": text}},
+            )
+            if "error" in text_response:
+                return {"executed": False, "steps": executed, "error": text_response["error"]}
+        if enter:
+            key_response = request(
+                info,
+                {"id": "profile", "method": "pane.send_key", "params": {"pane_id": pane_id, "key": "enter"}},
+            )
+            if "error" in key_response:
+                return {"executed": False, "steps": executed, "error": key_response["error"]}
+        executed.append({"pane": pane_name, "pane_id": pane_id, "text": text, "enter": enter})
+    return {"executed": True, "name": workflow.get("name"), "steps": executed}
 
 
 def run_server(args) -> int:

@@ -1370,7 +1370,7 @@ class WorktreeScreen(ModalScreen[None]):
     def _changed_and_close(self) -> None:
         self.dismiss()
         if self._on_changed is not None:
-            self.app.call_after_refresh(self._on_changed, True)
+            self._on_changed(True)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
@@ -2253,6 +2253,7 @@ class DirPickerScreen(ModalScreen[None]):
         self._active_browse_row = 0
         self._command_status = status
         self.query_one("#dir-jump", Input).value = ""
+        self._update_browse_footer()
         self.run_worker(self._populate(), exclusive=True)
 
     def _clear_input_filter(self, *, status: str = "") -> None:
@@ -2260,6 +2261,10 @@ class DirPickerScreen(ModalScreen[None]):
         self._active_browse_row = 0
         self._command_status = status
         self.query_one("#dir-jump", Input).value = ""
+        if self._search_mode:
+            self._update_search_footer()
+        else:
+            self._update_browse_footer()
         self.run_worker(self._populate(), exclusive=True)
 
     def _resolve_input_path(self, raw_path: str) -> str:
