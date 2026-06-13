@@ -8,7 +8,8 @@ from pyherdr.config import (
     WorkflowConfig,
     WorkflowStepConfig,
 )
-from pyherdr.startup_profiles import build_pane_command, plan_profile, validate_startup_config
+from pyherdr.layout import Rect, TileLayout
+from pyherdr.startup_profiles import build_pane_command, build_profile_layout, plan_profile, validate_startup_config
 
 
 class StartupProfileTests(unittest.TestCase):
@@ -67,6 +68,49 @@ class StartupProfileTests(unittest.TestCase):
         self.assertEqual(plan["layout"], "main-left")
         self.assertEqual(plan["panes"][0]["command"], "ssh ops@prod.example.com uptime")
         self.assertEqual(plan["workflow"]["steps"][0]["pane"], "prod")
+
+    def test_build_profile_layout_uses_template_when_available(self):
+        config = Config(
+            profiles={
+                "ops": ProfileConfig(
+                    layout="main-left",
+                    panes=[
+                        ProfilePaneConfig(name="local", position="left"),
+                        ProfilePaneConfig(name="logs", position="right-top"),
+                        ProfilePaneConfig(name="db", position="right-bottom"),
+                    ],
+                )
+            }
+        )
+
+        layout_data = build_profile_layout(config.profiles["ops"])
+        layout = TileLayout.from_dict(layout_data)
+
+        self.assertEqual(layout.pane_ids(), ["local", "logs", "db"])
+        self.assertEqual(
+            [(pane.pane_id, pane.rect) for pane in layout.panes(Rect(0, 0, 100, 40))],
+            [
+                ("local", Rect(0, 0, 65, 40)),
+                ("logs", Rect(65, 0, 35, 20)),
+                ("db", Rect(65, 20, 35, 20)),
+            ],
+        )
+
+    def test_build_profile_layout_uses_position_hints_without_template(self):
+        profile = ProfileConfig(
+            panes=[
+                ProfilePaneConfig(name="top", position="top"),
+                ProfilePaneConfig(name="bottom", position="bottom"),
+            ]
+        )
+
+        layout_data = build_profile_layout(profile)
+        layout = TileLayout.from_dict(layout_data)
+
+        self.assertEqual(
+            [(pane.pane_id, pane.rect) for pane in layout.panes(Rect(0, 0, 80, 20))],
+            [("top", Rect(0, 0, 80, 10)), ("bottom", Rect(0, 10, 80, 10))],
+        )
 
 
 if __name__ == "__main__":

@@ -445,9 +445,11 @@ class CliTests(unittest.TestCase):
                 "ops": ProfileConfig(
                     workspace="ops",
                     cwd="C:/work",
+                    layout="main-left",
                     panes=[
-                        ProfilePaneConfig(name="local", command="pwsh"),
-                        ProfilePaneConfig(name="prod", connection="prod", command="uptime"),
+                        ProfilePaneConfig(name="local", position="left", command="pwsh"),
+                        ProfilePaneConfig(name="prod", position="right-top", connection="prod", command="uptime"),
+                        ProfilePaneConfig(name="logs", position="right-bottom", command="tail -f app.log"),
                     ],
                 )
             },
@@ -468,9 +470,12 @@ class CliTests(unittest.TestCase):
                     }
                 }
             if method == "pane.create":
-                return {"result": {"pane": {"pane_id": "p2", "title": payload["params"]["title"]}}}
+                title = payload["params"]["title"]
+                return {"result": {"pane": {"pane_id": f"pane-{title}", "title": title}}}
             if method == "pane.start":
                 return {"result": {"pane": {"pane_id": payload["params"]["pane_id"]}, "started": True}}
+            if method == "pane.set_layout":
+                return {"result": {"type": "pane_layout_set"}}
             raise AssertionError(method)
 
         stdout = StringIO()
@@ -485,9 +490,15 @@ class CliTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["type"], "profile_start")
-        self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod"])
+        self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod", "logs"])
         start_commands = [call["params"]["command"] for call in calls if call["method"] == "pane.start"]
-        self.assertEqual(start_commands, ["pwsh", "ssh ops@prod.example.com uptime"])
+        self.assertEqual(start_commands, ["pwsh", "ssh ops@prod.example.com uptime", "tail -f app.log"])
+        layout_calls = [call for call in calls if call["method"] == "pane.set_layout"]
+        self.assertEqual(len(layout_calls), 1)
+        layout_root = layout_calls[0]["params"]["layout"]["root"]
+        self.assertEqual(layout_root["first"]["pane_id"], "p1")
+        self.assertEqual(layout_root["second"]["first"]["pane_id"], "pane-prod")
+        self.assertEqual(layout_root["second"]["second"]["pane_id"], "pane-logs")
 
     def test_pane_capture_parses_lines_styled_and_text_flags(self):
         args = build_parser().parse_args(["pane", "capture", "1-1", "--lines", "50", "--styled", "--text"])

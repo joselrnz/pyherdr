@@ -762,6 +762,7 @@ def run_profile(args) -> int:
         existing = panes_response["result"].get("panes", [])
         first_pane_id = existing[0]["pane_id"] if existing else None
         started_panes: list[dict[str, Any]] = []
+        pane_ids_by_name: dict[str, str] = {}
         for index, pane_plan in enumerate(plan["panes"]):
             pane_id = first_pane_id if index == 0 and first_pane_id else None
             if pane_id:
@@ -800,7 +801,21 @@ def run_profile(args) -> int:
                 if "error" in start_response:
                     return print_response(start_response)
                 start_result = start_response["result"]
+            pane_ids_by_name[str(pane_plan["name"])] = str(pane_id)
             started_panes.append({**pane_plan, "pane_id": pane_id, "started": start_result is not None})
+        applied_layout = None
+        if plan.get("layout_tree") and pane_ids_by_name:
+            applied_layout = _replace_layout_pane_ids(plan["layout_tree"], pane_ids_by_name)
+            layout_response = request(
+                info,
+                {
+                    "id": "profile",
+                    "method": "pane.set_layout",
+                    "params": {"workspace_id": workspace_id, "layout": applied_layout},
+                },
+            )
+            if "error" in layout_response:
+                return print_response(layout_response)
         print(
             json.dumps(
                 {
@@ -809,6 +824,7 @@ def run_profile(args) -> int:
                     "profile": args.name,
                     "workspace": workspace,
                     "layout": plan["layout"],
+                    "layout_tree": applied_layout,
                     "panes": started_panes,
                     "workflow": plan["workflow"],
                 },
@@ -817,6 +833,15 @@ def run_profile(args) -> int:
         )
         return 0
     return 2
+
+
+def _replace_layout_pane_ids(layout: dict[str, Any], pane_ids_by_name: dict[str, str]) -> dict[str, Any]:
+    def replace_node(node: dict[str, Any]) -> dict[str, Any]:
+        if "pane_id" in node:
+            return {**node, "pane_id": pane_ids_by_name.get(str(node["pane_id"]), str(node["pane_id"]))}
+        return {**node, "first": replace_node(node["first"]), "second": replace_node(node["second"])}
+
+    return {**layout, "root": replace_node(layout["root"])}
 
 
 def run_server(args) -> int:

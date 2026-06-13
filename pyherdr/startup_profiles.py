@@ -6,7 +6,8 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import Config, ConnectionConfig, ConnectionType, ProfilePaneConfig, WorkflowConfig
+from .config import Config, ConnectionConfig, ConnectionType, ProfileConfig, ProfilePaneConfig, WorkflowConfig
+from .layout import Direction, PaneNode, SplitNode, TileLayout, build_template_layout
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,48 @@ def build_pane_command(config: Config, pane: ProfilePaneConfig) -> str:
     if connection.type == ConnectionType.LOCAL:
         return pane.command
     return build_ssh_command(connection, pane.command)
+
+
+def _pane_names_for_layout(profile: ProfileConfig) -> list[str]:
+    panes = list(profile.panes)
+    if not panes:
+        return []
+    if profile.layout in {"main-left", "main-top"}:
+        preferred = ["left", "main", "right-top", "top", "right-bottom", "bottom"]
+    elif profile.layout == "grid-2x2":
+        preferred = ["top-left", "left-top", "top-right", "right-top", "bottom-left", "left-bottom", "bottom-right"]
+    else:
+        preferred = ["left", "top", "right", "bottom"]
+    ordered: list[ProfilePaneConfig] = []
+    remaining = panes.copy()
+    for position in preferred:
+        match = next((pane for pane in remaining if pane.position.lower() == position), None)
+        if match is not None:
+            ordered.append(match)
+            remaining.remove(match)
+    ordered.extend(remaining)
+    return [pane.name for pane in ordered]
+
+
+def build_profile_layout(profile: ProfileConfig) -> dict[str, Any]:
+    pane_names = _pane_names_for_layout(profile)
+    if not pane_names:
+        return {}
+    if len(pane_names) == 1:
+        return TileLayout.single(pane_names[0]).to_dict()
+    if profile.layout:
+        try:
+            return build_template_layout(profile.layout, pane_names).to_dict()
+        except ValueError:
+            pass
+    positions = {pane.position.lower(): pane.name for pane in profile.panes if pane.position}
+    if {"top", "bottom"}.issubset(positions):
+        root = SplitNode(Direction.VERTICAL, 0.5, PaneNode(positions["top"]), PaneNode(positions["bottom"]))
+        return TileLayout(root, positions["top"]).to_dict()
+    if {"left", "right"}.issubset(positions):
+        root = SplitNode(Direction.HORIZONTAL, 0.5, PaneNode(positions["left"]), PaneNode(positions["right"]))
+        return TileLayout(root, positions["left"]).to_dict()
+    return build_template_layout("columns-2" if len(pane_names) == 2 else "main-left", pane_names).to_dict()
 
 
 def validate_startup_config(config: Config, *, profile_name: str | None = None) -> StartupValidation:
@@ -145,6 +188,7 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
         "workspace": profile.workspace,
         "cwd": profile.cwd,
         "layout": profile.layout,
+        "layout_tree": build_profile_layout(profile),
         "panes": panes,
         "workflow": None
         if workflow is None
