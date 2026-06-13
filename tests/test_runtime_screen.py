@@ -148,6 +148,16 @@ class TerminalScreenTests(unittest.TestCase):
         self.assertIn("\x1b[0;4mClaude", rendered)
         self.assertNotIn("\x1b[0;4m      ", rendered)
 
+    def test_styled_render_does_not_underline_blank_cells_between_text(self):
+        screen = TerminalScreen(rows=1, cols=12)
+
+        screen.feed("\x1b[4mA B")
+
+        rendered = screen.render_styled()
+
+        self.assertIn("\x1b[0;4mA\x1b[0m \x1b[0;4mB", rendered)
+        self.assertNotIn("\x1b[0;4mA B", rendered)
+
     def test_styled_render_keeps_padding_needed_for_cursor(self):
         screen = TerminalScreen(rows=1, cols=12)
 
