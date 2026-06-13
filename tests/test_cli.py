@@ -1149,6 +1149,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["detector_test"]["state"], "blocked")
         self.assertTrue(payload["detector_test"]["visible_blocker"])
+        self.assertEqual(payload["safety"]["execution"], "in_process")
+        self.assertFalse(payload["safety"]["isolated"])
+        self.assertIn("same Python process", payload["safety"]["policy"])
 
     def test_plugin_validate_lists_launcher_plugin_records(self):
         import tempfile

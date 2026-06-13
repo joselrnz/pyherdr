@@ -15,6 +15,7 @@ from .detect import AgentDetection
 from .domain.status import AgentStatus
 
 PluginKind = Literal["detector", "launcher", "theme", "exporter"]
+PluginExecution = Literal["in_process"]
 DetectorResult = AgentDetection | AgentStatus | str | dict[str, Any]
 DetectorCallable = Callable[[str], DetectorResult]
 LauncherRecord = dict[str, str]
@@ -33,6 +34,7 @@ class PluginManifest(BaseModel):
     entrypoint: str = Field(min_length=1)
     description: str = ""
     aliases: list[str] = Field(default_factory=list)
+    execution: PluginExecution = "in_process"
 
 
 def load_plugin_manifest(path: Path | str) -> PluginManifest:
@@ -42,6 +44,19 @@ def load_plugin_manifest(path: Path | str) -> PluginManifest:
         return PluginManifest.model_validate(payload)
     except (OSError, json.JSONDecodeError, ValidationError) as error:
         raise ValueError(f"invalid plugin manifest {target}: {error}") from error
+
+
+def plugin_safety_summary(manifest: PluginManifest) -> dict[str, Any]:
+    """Return the currently supported plugin execution boundary."""
+    return {
+        "execution": manifest.execution,
+        "isolated": False,
+        "policy": (
+            "Plugins run in the same Python process as PyHerdr and have the same local permissions. "
+            "Only install and configure plugins from trusted sources."
+        ),
+        "subprocess_supported": False,
+    }
 
 
 @dataclass(frozen=True)

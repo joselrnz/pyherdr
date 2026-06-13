@@ -247,6 +247,10 @@ browser-quality diagram, export SVG and open it in a browser.
 - Remote/plugin foundations: `pyherdr remote probe HOST` checks SSH prerequisites
   before remote panes are enabled; `pyherdr plugin validate plugin.json` validates
   detector, launcher, theme, and exporter manifests.
+- Plugin safety: current plugins run in-process as trusted local Python code.
+  `execution = "in_process"` is the only supported manifest boundary today;
+  `pyherdr plugin validate plugin.json` reports that subprocess isolation is not
+  active yet.
 - Recent workspace roots: `.pyherdr/workspace_recents.json`; this stores paths
   and labels plus lightweight repo hints, not the server auth token. Use
   `pyherdr workspace recents` to inspect or prune stale roots.

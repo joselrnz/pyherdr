@@ -21,6 +21,7 @@ from .plugins import (
     load_launcher_plugin,
     load_plugin_manifest,
     load_theme_plugin,
+    plugin_safety_summary,
 )
 from .remote import probe_connection, probe_remote
 from .replay import load_recording, summarize_recording
@@ -763,7 +764,11 @@ def run_remote(args) -> int:
 def run_plugin(args) -> int:
     if args.plugin_command == "validate":
         manifest = load_plugin_manifest(Path(args.manifest))
-        payload: dict[str, Any] = {"type": "plugin_manifest", "manifest": manifest.model_dump()}
+        payload: dict[str, Any] = {
+            "type": "plugin_manifest",
+            "manifest": manifest.model_dump(),
+            "safety": plugin_safety_summary(manifest),
+        }
         sample = ""
         if args.test_file:
             sample = Path(args.test_file).read_text(encoding="utf-8")

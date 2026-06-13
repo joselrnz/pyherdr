@@ -61,6 +61,48 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertEqual(manifest.name, "status-detector")
         self.assertEqual(manifest.kind, "detector")
+        self.assertEqual(manifest.execution, "in_process")
+
+    def test_plugin_manifest_accepts_explicit_in_process_execution(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "plugin.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "name": "status-detector",
+                        "version": "1.0.0",
+                        "kind": "detector",
+                        "entrypoint": "plugin.py",
+                        "execution": "in_process",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = load_plugin_manifest(path)
+
+        self.assertEqual(manifest.execution, "in_process")
+
+    def test_plugin_manifest_rejects_unsupported_execution_boundary(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "plugin.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "name": "status-detector",
+                        "version": "1.0.0",
+                        "kind": "detector",
+                        "entrypoint": "plugin.py",
+                        "execution": "subprocess",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError) as caught:
+                load_plugin_manifest(path)
+
+        self.assertIn("invalid plugin manifest", str(caught.exception))
 
     def test_detector_plugin_loads_and_runs(self):
         with TemporaryDirectory() as temp:
