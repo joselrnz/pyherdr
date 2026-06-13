@@ -139,6 +139,23 @@ class TerminalScreenTests(unittest.TestCase):
         self.assertIn("line0", rendered)
         self.assertNotIn("line7", rendered)
 
+    def test_styled_render_trims_style_only_blank_cells(self):
+        screen = TerminalScreen(rows=3, cols=12)
+
+        screen.feed("\x1b[4m\x1b[2J\x1b[HClaude")
+
+        rendered = screen.render_styled()
+        self.assertIn("\x1b[0;4mClaude", rendered)
+        self.assertNotIn("\x1b[0;4m      ", rendered)
+
+    def test_styled_render_keeps_padding_needed_for_cursor(self):
+        screen = TerminalScreen(rows=1, cols=12)
+
+        screen.feed("\x1b[6G")
+
+        rendered = screen.render_styled(cursor=True)
+        self.assertIn("\x1b[0;7m ", rendered)
+
     def test_terminal_metadata_tracks_alt_screen_and_mouse_reporting_modes(self):
         screen = TerminalScreen(rows=3, cols=20, history=50)
 

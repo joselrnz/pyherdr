@@ -156,7 +156,10 @@ class TerminalScreen:
             row = screen.buffer[y]
             out: list[str] = []
             last: str | None = None
-            for x in range(self._cols):
+            last_cell = self._last_visible_cell(row)
+            if cursor and y == cur_y:
+                last_cell = max(last_cell, cur_x)
+            for x in range(last_cell + 1):
                 char = row[x]
                 sgr = _sgr(char, cursor and y == cur_y and x == cur_x)
                 if sgr != last:
@@ -166,6 +169,13 @@ class TerminalScreen:
             out.append("\x1b[0m")
             lines.append("".join(out))
         return "\n".join(lines)
+
+    def _last_visible_cell(self, row: dict[int, pyte.screens.Char]) -> int:
+        """Return the last column with real text, ignoring style-only blanks."""
+        for x in range(self._cols - 1, -1, -1):
+            if row[x].data and row[x].data != " ":
+                return x
+        return -1
 
     def snapshot(self, lines: int | None = None) -> list[str]:
         """Return scrollback history plus the visible screen.
