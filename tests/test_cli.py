@@ -894,6 +894,81 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.host, "buildbox")
         self.assertEqual(args.timeout, 3)
 
+        by_connection = build_parser().parse_args(["remote", "probe-connection", "prod"])
+        self.assertEqual(by_connection.remote_command, "probe-connection")
+        self.assertEqual(by_connection.name, "prod")
+
+    def test_remote_probe_connection_uses_configured_connection(self):
+        from pyherdr.cli import run_remote
+        from pyherdr.config import Config, ConnectionConfig
+
+        args = build_parser().parse_args(["remote", "probe-connection", "prod"])
+        config = Config(connections={"prod": ConnectionConfig(host="prod.example.com", user="ops")})
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=config),
+            patch(
+                "pyherdr.cli.probe_connection",
+                return_value={
+                    "type": "remote_probe",
+                    "connection": "prod",
+                    "host": "prod.example.com",
+                    "target": "ops@prod.example.com",
+                    "ok": True,
+                },
+            ) as probe,
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_remote(args)
+
+        self.assertEqual(exit_code, 0)
+        probe.assert_called_once_with("prod", config.connections["prod"])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["connection"], "prod")
+        self.assertTrue(payload["ok"])
+
+    def test_profile_probe_runs_unique_profile_connections(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig, ProfileConfig, ProfilePaneConfig
+
+        args = build_parser().parse_args(["profile", "probe", "ops"])
+        config = Config(
+            connections={
+                "prod": ConnectionConfig(host="prod.example.com", user="ops"),
+                "logs": ConnectionConfig(host="logs.example.com", user="ops"),
+            },
+            profiles={
+                "ops": ProfileConfig(
+                    panes=[
+                        ProfilePaneConfig(name="api", connection="prod"),
+                        ProfilePaneConfig(name="api-2", connection="prod"),
+                        ProfilePaneConfig(name="logs", connection="logs"),
+                        ProfilePaneConfig(name="local", command="pwsh"),
+                    ]
+                )
+            },
+        )
+
+        def fake_probe(name, connection):
+            return {"type": "remote_probe", "connection": name, "host": connection.host, "ok": name != "logs"}
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=config),
+            patch("pyherdr.cli.probe_connection", side_effect=fake_probe) as probe,
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_profile(args)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual([call.args[0] for call in probe.call_args_list], ["prod", "logs"])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["type"], "profile_probe")
+        self.assertEqual(payload["profile"], "ops")
+        self.assertFalse(payload["ok"])
+        self.assertEqual([result["connection"] for result in payload["results"]], ["prod", "logs"])
+
     def test_plugin_validate_parses_manifest_path(self):
         args = build_parser().parse_args(["plugin", "validate", "plugin.json"])
 

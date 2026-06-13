@@ -16,7 +16,7 @@ from .diagnostics import create_debug_bundle
 from .gui import main as dashboard_main
 from .models import AgentStatus
 from .plugins import load_plugin_manifest
-from .remote import probe_remote
+from .remote import probe_connection, probe_remote
 from .replay import load_recording, summarize_recording
 from .server import (
     ServerInfo,
@@ -170,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     remote_probe = remote_sub.add_parser("probe", help="test remote prerequisites over SSH")
     remote_probe.add_argument("host")
     remote_probe.add_argument("--timeout", type=int, default=5)
+    remote_probe_connection = remote_sub.add_parser("probe-connection", help="test a configured SSH connection")
+    remote_probe_connection.add_argument("name")
 
     plugin = sub.add_parser("plugin", help="plugin manifest commands")
     plugin_sub = plugin.add_subparsers(dest="plugin_command", required=True)
@@ -181,6 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     profile_sub.add_parser("list", help="list configured connections, profiles, and workflows")
     profile_validate = profile_sub.add_parser("validate", help="validate startup profile configuration")
     profile_validate.add_argument("name", nargs="?", help="optional profile name to validate")
+    profile_probe = profile_sub.add_parser("probe", help="probe SSH connections used by a profile")
+    profile_probe.add_argument("name")
     profile_plan = profile_sub.add_parser("plan", help="print generated pane commands for a profile")
     profile_plan.add_argument("name")
     profile_plan.add_argument("--workflow", help="include workflow steps for this profile")
@@ -709,6 +713,20 @@ def run_remote(args) -> int:
         result = probe_remote(args.host, timeout=args.timeout)
         print(json.dumps(result, indent=2))
         return 0 if result.get("ok") else 1
+    if args.remote_command == "probe-connection":
+        config = load_config()
+        connection = config.connections.get(args.name)
+        if connection is None:
+            print(
+                json.dumps(
+                    {"type": "remote_probe", "connection": args.name, "ok": False, "error": "connection not found"},
+                    indent=2,
+                )
+            )
+            return 1
+        result = probe_connection(args.name, connection)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
     return 2
 
 
@@ -751,6 +769,16 @@ def run_profile(args) -> int:
         }
         print(json.dumps(payload, indent=2))
         return 0 if validation.ok else 1
+    if args.profile_command == "probe":
+        try:
+            connections = _profile_probe_connections(config, args.name)
+        except ValueError as exc:
+            print(json.dumps({"type": "profile_probe", "profile": args.name, "ok": False, "error": str(exc)}, indent=2))
+            return 1
+        results = [probe_connection(name, connection) for name, connection in connections]
+        ok = all(result.get("ok") for result in results)
+        print(json.dumps({"type": "profile_probe", "profile": args.name, "ok": ok, "results": results}, indent=2))
+        return 0 if ok else 1
     if args.profile_command == "plan":
         try:
             payload = plan_profile(config, args.name, workflow_name=args.workflow)
@@ -891,6 +919,29 @@ def run_profile(args) -> int:
 def _profile_session_name(profile_name: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", profile_name.strip()).strip("-")
     return f"profile-{safe or 'profile'}"
+
+
+def _profile_probe_connections(config: Any, profile_name: str) -> list[tuple[str, Any]]:
+    if profile_name not in config.profiles:
+        raise ValueError(f"profile {profile_name} does not exist")
+    validation = validate_startup_config(config, profile_name=profile_name)
+    if not validation.ok:
+        raise ValueError("; ".join(validation.errors))
+    profile = config.profiles[profile_name]
+    connections: list[tuple[str, Any]] = []
+    seen: set[str] = set()
+    for pane in profile.panes:
+        name = pane.connection
+        if not name or name in seen:
+            continue
+        connection = config.connections.get(name)
+        if connection is None:
+            continue
+        if getattr(connection, "type", "") == "local":
+            continue
+        seen.add(name)
+        connections.append((name, connection))
+    return connections
 
 
 def _replace_layout_pane_ids(layout: dict[str, Any], pane_ids_by_name: dict[str, str]) -> dict[str, Any]:
