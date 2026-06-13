@@ -1,4 +1,5 @@
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,24 @@ from pyherdr.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_pyproject_metadata_communicates_package_value_and_compatibility(self):
+        project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+        self.assertEqual(project["name"], "pyherdr")
+        self.assertIn("terminal-native", project["description"].lower())
+        self.assertEqual(project["requires-python"], ">=3.11")
+        self.assertEqual(project["scripts"]["pyherdr"], "pyherdr.cli:main")
+        self.assertIn("automation", project["keywords"])
+        self.assertIn("ssh", project["keywords"])
+        self.assertIn("Documentation", project["urls"])
+        self.assertIn("Changelog", project["urls"])
+        self.assertIn("Development Status :: 3 - Alpha", project["classifiers"])
+        self.assertIn("Operating System :: Microsoft :: Windows", project["classifiers"])
+        self.assertIn("Operating System :: POSIX :: Linux", project["classifiers"])
+        self.assertIn("Operating System :: MacOS", project["classifiers"])
+        self.assertIn("Typing :: Typed", project["classifiers"])
+        self.assertTrue(Path("pyherdr/py.typed").exists())
+
     def test_workspace_search_config_loads_from_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"

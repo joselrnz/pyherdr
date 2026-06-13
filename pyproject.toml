@@ -5,19 +5,26 @@ build-backend = "hatchling.build"
 [project]
 name = "pyherdr"
 version = "0.0.4"
-description = "Python desktop and CLI fork of Herdr"
+description = "Terminal-native multiplexer for AI-agent workflows, SSH panes, and scripted terminal automation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "joselrnz" }]
-keywords = ["terminal", "multiplexer", "tui", "ai-agents", "herdr"]
+keywords = ["terminal", "multiplexer", "tui", "ai-agents", "automation", "ssh", "herdr"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Environment :: Console",
+    "Topic :: Software Development :: User Interfaces",
     "Topic :: Terminals :: Terminal Emulators/X Terminals",
+    "Typing :: Typed",
 ]
 dependencies = [
     "pydantic>=2.11,<3",
@@ -31,6 +38,8 @@ dependencies = [
 Homepage = "https://github.com/joselrnz/pyherdr"
 Repository = "https://github.com/joselrnz/pyherdr"
 Issues = "https://github.com/joselrnz/pyherdr/issues"
+Documentation = "https://github.com/joselrnz/pyherdr#readme"
+Changelog = "https://github.com/joselrnz/pyherdr/blob/main/CHANGELOG.md"
 
 [project.scripts]
 pyherdr = "pyherdr.cli:main"
