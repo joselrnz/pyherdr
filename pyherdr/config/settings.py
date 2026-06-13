@@ -262,6 +262,12 @@ class LaunchersConfig(_Section):
     presets: list[LauncherPresetConfig] = Field(default_factory=list)
 
 
+class PluginsConfig(_Section):
+    """Configured plugin manifest paths."""
+
+    detectors: list[str] = Field(default_factory=list)
+
+
 class KeysConfig(_Section):
     """Keybinding config: custom prefix, action→key overrides, and commands."""
 
@@ -282,6 +288,7 @@ class Config(_Section):
     update: UpdateConfig = UpdateConfig()
     keys: KeysConfig = KeysConfig()
     launchers: LaunchersConfig = LaunchersConfig()
+    plugins: PluginsConfig = PluginsConfig()
     ui: UiConfig = UiConfig()
     workspace: WorkspaceConfig = WorkspaceConfig()
     worktrees: WorktreesConfig = WorktreesConfig()

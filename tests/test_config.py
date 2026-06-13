@@ -201,6 +201,22 @@ pane_id = "pane_2"
         self.assertEqual(config.layouts["ops"].pane_count, 2)
         self.assertEqual(config.layouts["ops"].layout["focus"], "pane_2")
 
+    def test_plugin_detector_paths_load_from_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                """
+[plugins]
+detectors = ["./plugins/sample/plugin.json", "C:/tools/other/plugin.json"]
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.plugins.detectors[0], "./plugins/sample/plugin.json")
+        self.assertEqual(config.plugins.detectors[1], "C:/tools/other/plugin.json")
+
 
 if __name__ == "__main__":
     unittest.main()

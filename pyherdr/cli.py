@@ -15,7 +15,7 @@ from .config import load_config
 from .diagnostics import create_debug_bundle
 from .gui import main as dashboard_main
 from .models import AgentStatus
-from .plugins import load_plugin_manifest
+from .plugins import load_detector_plugin, load_plugin_manifest
 from .remote import probe_connection, probe_remote
 from .replay import load_recording, summarize_recording
 from .server import (
@@ -177,6 +177,8 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_sub = plugin.add_subparsers(dest="plugin_command", required=True)
     plugin_validate = plugin_sub.add_parser("validate", help="validate a plugin manifest")
     plugin_validate.add_argument("manifest")
+    plugin_validate.add_argument("--test-input", default="", help="sample text to run through a detector plugin")
+    plugin_validate.add_argument("--test-file", default="", help="sample text file to run through a detector plugin")
 
     profile = sub.add_parser("profile", help="startup profile inventory commands")
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
@@ -743,7 +745,24 @@ def run_remote(args) -> int:
 def run_plugin(args) -> int:
     if args.plugin_command == "validate":
         manifest = load_plugin_manifest(Path(args.manifest))
-        print(json.dumps({"type": "plugin_manifest", "manifest": manifest.model_dump()}, indent=2))
+        payload: dict[str, Any] = {"type": "plugin_manifest", "manifest": manifest.model_dump()}
+        sample = ""
+        if args.test_file:
+            sample = Path(args.test_file).read_text(encoding="utf-8")
+        elif args.test_input:
+            sample = args.test_input
+        if sample:
+            if manifest.kind != "detector":
+                raise ValueError("--test-input/--test-file is only supported for detector plugins")
+            detection = load_detector_plugin(Path(args.manifest)).detect(sample)
+            payload["detector_test"] = {
+                "state": detection.state.value,
+                "skip_state_update": detection.skip_state_update,
+                "visible_blocker": detection.visible_blocker,
+                "visible_idle": detection.visible_idle,
+                "visible_working": detection.visible_working,
+            }
+        print(json.dumps(payload, indent=2))
         return 0
     return 2
 

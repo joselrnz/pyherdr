@@ -27,6 +27,7 @@ from .layout import (
 from .live_updates import build_state_events
 from .models import AgentStatus, AppState, Pane, Tab
 from .notification import Notification, deliver
+from .plugins import detect_plugin_agent
 from .recording import build_session_recording, count_recorded_panes, write_session_recording
 from .runtime import TerminalManager
 from .runtime.procstats import AVAILABLE as STATS_AVAILABLE
@@ -676,9 +677,13 @@ def _update_status_from_screen(pane: Pane, output: str) -> None:
     if not pane.agent:
         return
     agent = parse_agent_label(pane.agent)
-    if agent is None:
-        return
-    detection = detect(agent, output)
+    if agent is not None:
+        detection = detect(agent, output)
+    else:
+        plugin_detection = detect_plugin_agent(pane.agent, output, load_config().plugins.detectors)
+        if plugin_detection is None:
+            return
+        detection = plugin_detection
     if not detection.skip_state_update:
         pane.status = detection.state
 

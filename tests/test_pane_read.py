@@ -1,6 +1,11 @@
+import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from pyherdr.api import dispatch
+from pyherdr.config import Config, PluginsConfig
 from pyherdr.models import AgentStatus, AppState
 
 
@@ -79,6 +84,41 @@ class PaneReadTests(unittest.TestCase):
         dispatch(state, {"id": "r", "method": "pane.read", "params": {"pane_id": pane.id}}, _SessionManager(screen))
 
         self.assertEqual(pane.status, AgentStatus.WORKING)
+
+    def test_pane_read_updates_status_from_detector_plugin(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "detector.py").write_text(
+                "def detect(content):\n"
+                "    return {'state': 'blocked', 'visible_blocker': True} if 'APPROVE' in content else 'idle'\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "sample-agent",
+                        "version": "1.0.0",
+                        "kind": "detector",
+                        "entrypoint": "detector.py",
+                        "aliases": ["sample"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = AppState.bootstrap(cwd="C:/work")
+            pane = state.focused_workspace.focused_tab.focused_pane
+            pane.agent = "sample"
+            config = Config(plugins=PluginsConfig(detectors=[str(manifest)]))
+
+            with patch("pyherdr.api.load_config", return_value=config):
+                dispatch(
+                    state,
+                    {"id": "r", "method": "pane.read", "params": {"pane_id": pane.id}},
+                    _SessionManager("APPROVE deploy"),
+                )
+
+        self.assertEqual(pane.status, AgentStatus.BLOCKED)
 
     def test_pane_wait_output_returns_changed_versions(self):
         state = AppState.bootstrap(cwd="C:/work")

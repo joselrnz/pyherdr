@@ -1083,6 +1083,46 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.plugin_command, "validate")
         self.assertEqual(args.manifest, "plugin.json")
 
+    def test_plugin_validate_accepts_detector_test_input(self):
+        args = build_parser().parse_args(["plugin", "validate", "plugin.json", "--test-input", "APPROVE"])
+
+        self.assertEqual(args.test_input, "APPROVE")
+
+    def test_plugin_validate_runs_detector_smoke_test(self):
+        import tempfile
+
+        from pyherdr.cli import run_plugin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "detector.py").write_text(
+                "def detect(content):\n"
+                "    return {'state': 'blocked', 'visible_blocker': True} if 'APPROVE' in content else 'idle'\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "sample-agent",
+                        "version": "1.0.0",
+                        "kind": "detector",
+                        "entrypoint": "detector.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(["plugin", "validate", str(manifest), "--test-input", "APPROVE"])
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_plugin(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["detector_test"]["state"], "blocked")
+        self.assertTrue(payload["detector_test"]["visible_blocker"])
+
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):
             render_demo_screenshot(Path("unused.svg"), view="missing")
