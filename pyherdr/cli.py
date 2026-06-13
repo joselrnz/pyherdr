@@ -762,6 +762,7 @@ def run_profile(args) -> int:
         existing = panes_response["result"].get("panes", [])
         first_pane_id = existing[0]["pane_id"] if existing else None
         started_panes: list[dict[str, Any]] = []
+        started_panes_by_name: dict[str, dict[str, Any]] = {}
         pane_ids_by_name: dict[str, str] = {}
         for index, pane_plan in enumerate(plan["panes"]):
             pane_id = first_pane_id if index == 0 and first_pane_id else None
@@ -788,21 +789,10 @@ def run_profile(args) -> int:
                 if "error" in create_response:
                     return print_response(create_response)
                 pane_id = create_response["result"]["pane"]["pane_id"]
-            start_result = None
-            if pane_plan["command"]:
-                start_response = request(
-                    info,
-                    {
-                        "id": "profile",
-                        "method": "pane.start",
-                        "params": {"pane_id": pane_id, "command": pane_plan["command"]},
-                    },
-                )
-                if "error" in start_response:
-                    return print_response(start_response)
-                start_result = start_response["result"]
             pane_ids_by_name[str(pane_plan["name"])] = str(pane_id)
-            started_panes.append({**pane_plan, "pane_id": pane_id, "started": start_result is not None})
+            pane_record = {**pane_plan, "pane_id": pane_id, "started": False}
+            started_panes.append(pane_record)
+            started_panes_by_name[str(pane_plan["name"])] = pane_record
         applied_layout = None
         if plan.get("layout_tree") and pane_ids_by_name:
             applied_layout = _replace_layout_pane_ids(plan["layout_tree"], pane_ids_by_name)
@@ -816,6 +806,23 @@ def run_profile(args) -> int:
             )
             if "error" in layout_response:
                 return print_response(layout_response)
+        for pane_plan in _ordered_profile_panes(plan["panes"]):
+            pane_id = pane_ids_by_name[str(pane_plan["name"])]
+            if pane_plan["command"]:
+                start_params: dict[str, Any] = {"pane_id": pane_id, "command": pane_plan["command"]}
+                if pane_plan.get("env"):
+                    start_params["env"] = pane_plan["env"]
+                start_response = request(
+                    info,
+                    {
+                        "id": "profile",
+                        "method": "pane.start",
+                        "params": start_params,
+                    },
+                )
+                if "error" in start_response:
+                    return print_response(start_response)
+                started_panes_by_name[str(pane_plan["name"])]["started"] = True
         workflow_execution = _execute_profile_workflow(info, plan.get("workflow"), pane_ids_by_name)
         if workflow_execution.get("error"):
             print(json.dumps({"type": "profile_start", "ok": False, "error": workflow_execution["error"]}, indent=2))
@@ -847,6 +854,13 @@ def _replace_layout_pane_ids(layout: dict[str, Any], pane_ids_by_name: dict[str,
         return {**node, "first": replace_node(node["first"]), "second": replace_node(node["second"])}
 
     return {**layout, "root": replace_node(layout["root"])}
+
+
+def _ordered_profile_panes(panes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        panes,
+        key=lambda pane: (int(pane.get("start_order") or 0), int(pane.get("profile_index") or 0)),
+    )
 
 
 def _execute_profile_workflow(

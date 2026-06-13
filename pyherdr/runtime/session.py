@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from . import keys
@@ -209,6 +209,7 @@ class TerminalManager:
         command: Command,
         cwd: str = "",
         *,
+        env: Mapping[str, str] | None = None,
         rows: int = DEFAULT_ROWS,
         cols: int = DEFAULT_COLS,
     ) -> bool:
@@ -217,15 +218,15 @@ class TerminalManager:
             existing = self._sessions.get(pane_id)
             if existing is not None and existing.is_alive():
                 return False
-            # Merge configured env over the inherited environment (None = inherit).
-            env = {**os.environ, **self._env} if self._env else None
+            # Merge configured env and per-start env over the inherited environment.
+            session_env = {**os.environ, **self._env, **dict(env or {})} if self._env or env else None
             session = TerminalSession(
                 pane_id,
                 command,
                 cwd,
                 rows=rows,
                 cols=cols,
-                env=env,
+                env=session_env,
                 on_output=self._notify_output,
             )
             self._sessions[pane_id] = session

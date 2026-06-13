@@ -56,7 +56,17 @@ class StartupProfileTests(unittest.TestCase):
                 "ops": ProfileConfig(
                     workspace="ops",
                     layout="main-left",
-                    panes=[ProfilePaneConfig(name="prod", connection="prod", command="uptime")],
+                    env={"APP_ENV": "prod", "REGION": "us"},
+                    panes=[
+                        ProfilePaneConfig(
+                            name="prod",
+                            connection="prod",
+                            command="uptime",
+                            env={"REGION": "eu"},
+                            start_order=20,
+                        ),
+                        ProfilePaneConfig(name="local", command="pwsh", start_order=10),
+                    ],
                 )
             },
             workflows={"health": WorkflowConfig(profile="ops", steps=[WorkflowStepConfig(pane="prod", send="uptime")])},
@@ -67,6 +77,9 @@ class StartupProfileTests(unittest.TestCase):
         self.assertEqual(plan["workspace"], "ops")
         self.assertEqual(plan["layout"], "main-left")
         self.assertEqual(plan["panes"][0]["command"], "ssh ops@prod.example.com uptime")
+        self.assertEqual(plan["panes"][0]["env"], {"APP_ENV": "prod", "REGION": "eu"})
+        self.assertEqual(plan["panes"][1]["env"], {"APP_ENV": "prod", "REGION": "us"})
+        self.assertEqual(plan["start_sequence"], ["local", "prod"])
         self.assertEqual(plan["workflow"]["steps"][0]["pane"], "prod")
 
     def test_build_profile_layout_uses_template_when_available(self):

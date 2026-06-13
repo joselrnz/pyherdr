@@ -109,15 +109,23 @@ key = "~/.ssh/id_ed25519"
 workspace = "ops"
 layout = "main-left"
 
+[profiles.ops.env]
+APP_ENV = "prod"
+
 [[profiles.ops.panes]]
 name = "prod-1"
 connection = "host1"
 command = "uptime"
+start_order = 20
+
+[profiles.ops.panes.env]
+HOST_ROLE = "api"
 
 [[profiles.ops.panes]]
 name = "prod-10"
 connection = "host10"
 command = "journalctl -f"
+start_order = 10
 
 [workflows.health]
 profile = "ops"
@@ -133,7 +141,10 @@ send = "uptime"
 
         self.assertEqual(len(config.connections), 100)
         self.assertEqual(config.connections["host10"].host, "host10.example.com")
+        self.assertEqual(config.profiles["ops"].env, {"APP_ENV": "prod"})
         self.assertEqual(config.profiles["ops"].panes[1].connection, "host10")
+        self.assertEqual(config.profiles["ops"].panes[0].env, {"HOST_ROLE": "api"})
+        self.assertEqual(config.profiles["ops"].panes[1].start_order, 10)
         self.assertEqual(config.workflows["health"].steps[0].pane, "prod-1")
 
 

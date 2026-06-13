@@ -152,12 +152,15 @@ class ProfilePaneConfig(_Section):
     cwd: str = ""
     position: str = ""
     tab: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    start_order: int = 0
 
 
 class ProfileConfig(_Section):
     workspace: str = ""
     cwd: str = ""
     layout: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
     panes: list[ProfilePaneConfig] = Field(default_factory=list)
 
 

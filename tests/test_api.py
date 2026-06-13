@@ -19,6 +19,15 @@ class _FakeProcesses:
         return len(pane_ids)
 
 
+class _StartProcesses:
+    def __init__(self) -> None:
+        self.started: list[tuple[str, str, str, dict[str, str]]] = []
+
+    def start(self, pane_id: str, command: str, cwd: str, *, env: dict[str, str] | None = None) -> bool:
+        self.started.append((pane_id, command, cwd, dict(env or {})))
+        return True
+
+
 class _CaptureProcesses:
     """A manager with a live session whose full buffer/styled screen are fixed."""
 
@@ -118,6 +127,24 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(recents[0]["path"], str(workspace.resolve()))
         self.assertEqual(recents[0]["label"], "api")
+
+    def test_pane_start_passes_per_start_env_to_process_manager(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+        processes = _StartProcesses()
+
+        response = dispatch(
+            state,
+            {
+                "id": "start",
+                "method": "pane.start",
+                "params": {"pane_id": pane.id, "command": "pwsh", "env": {"APP_ENV": "prod", "COUNT": 3}},
+            },
+            processes,
+        )
+
+        self.assertEqual(response["result"]["type"], "pane_start")
+        self.assertEqual(processes.started, [(pane.id, "pwsh", pane.cwd, {"APP_ENV": "prod", "COUNT": "3"})])
 
     def test_pane_scroll_accepts_viewport_directions(self):
         state = AppState.bootstrap(cwd="C:/work")

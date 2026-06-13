@@ -739,7 +739,8 @@ def _pane_start(state: AppState, params: dict[str, Any], processes: TerminalMana
         raise ValueError("pane.start requires a server process manager")
     pane = state.require_pane(_required(params, "pane_id"))
     command = _required(params, "command")
-    started = processes.start(pane.id, command, pane.cwd)
+    env = _string_env(params.get("env"))
+    started = processes.start(pane.id, command, pane.cwd, env=env)
     # Only relabel the pane if a session was actually started; a False return
     # means one was already running and we must not clobber its metadata.
     if started:
@@ -753,6 +754,14 @@ def _pane_start(state: AppState, params: dict[str, Any], processes: TerminalMana
         "started": started,
         "pane": _pane_record(pane, workspace_id, tab_id),
     }
+
+
+def _string_env(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("env must be an object")
+    return {str(key): str(item) for key, item in value.items()}
 
 
 def _pane_send_text(state: AppState, params: dict[str, Any], processes: TerminalManager | None) -> dict[str, Any]:

@@ -453,10 +453,23 @@ class CliTests(unittest.TestCase):
                     workspace="ops",
                     cwd="C:/work",
                     layout="main-left",
+                    env={"APP_ENV": "prod", "SHARED": "profile"},
                     panes=[
-                        ProfilePaneConfig(name="local", position="left", command="pwsh"),
-                        ProfilePaneConfig(name="prod", position="right-top", connection="prod", command="uptime"),
-                        ProfilePaneConfig(name="logs", position="right-bottom", command="tail -f app.log"),
+                        ProfilePaneConfig(name="local", position="left", command="pwsh", start_order=30),
+                        ProfilePaneConfig(
+                            name="prod",
+                            position="right-top",
+                            connection="prod",
+                            command="uptime",
+                            env={"HOST_ROLE": "api", "SHARED": "pane"},
+                            start_order=10,
+                        ),
+                        ProfilePaneConfig(
+                            name="logs",
+                            position="right-bottom",
+                            command="tail -f app.log",
+                            start_order=20,
+                        ),
                     ],
                 )
             },
@@ -512,7 +525,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["type"], "profile_start")
         self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod", "logs"])
         start_commands = [call["params"]["command"] for call in calls if call["method"] == "pane.start"]
-        self.assertEqual(start_commands, ["pwsh", "ssh ops@prod.example.com uptime", "tail -f app.log"])
+        self.assertEqual(start_commands, ["ssh ops@prod.example.com uptime", "tail -f app.log", "pwsh"])
+        start_envs = [call["params"].get("env", {}) for call in calls if call["method"] == "pane.start"]
+        self.assertEqual(
+            start_envs,
+            [
+                {"APP_ENV": "prod", "SHARED": "pane", "HOST_ROLE": "api"},
+                {"APP_ENV": "prod", "SHARED": "profile"},
+                {"APP_ENV": "prod", "SHARED": "profile"},
+            ],
+        )
         layout_calls = [call for call in calls if call["method"] == "pane.set_layout"]
         self.assertEqual(len(layout_calls), 1)
         layout_root = layout_calls[0]["params"]["layout"]["root"]

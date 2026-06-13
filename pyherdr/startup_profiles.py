@@ -171,16 +171,28 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
             raise ValueError(f"workflow {workflow_name} does not exist")
         if workflow.profile != profile_name:
             raise ValueError(f"workflow {workflow_name} targets profile {workflow.profile}, not {profile_name}")
-    panes = [
-        {
-            "name": pane.name,
-            "connection": pane.connection,
-            "command": build_pane_command(config, pane),
-            "cwd": pane.cwd or profile.cwd,
-            "position": pane.position,
-            "tab": pane.tab,
-        }
-        for pane in profile.panes
+    panes: list[dict[str, Any]] = []
+    for index, pane in enumerate(profile.panes):
+        env = {**profile.env, **pane.env}
+        panes.append(
+            {
+                "name": pane.name,
+                "connection": pane.connection,
+                "command": build_pane_command(config, pane),
+                "cwd": pane.cwd or profile.cwd,
+                "position": pane.position,
+                "tab": pane.tab,
+                "env": env,
+                "start_order": pane.start_order,
+                "profile_index": index,
+            }
+        )
+    start_sequence = [
+        pane["name"]
+        for pane in sorted(
+            panes,
+            key=lambda pane: (int(pane["start_order"]) if pane["start_order"] else 0, int(pane["profile_index"])),
+        )
     ]
     return {
         "type": "profile_plan",
@@ -190,6 +202,7 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
         "layout": profile.layout,
         "layout_tree": build_profile_layout(profile),
         "panes": panes,
+        "start_sequence": start_sequence,
         "workflow": None
         if workflow is None
         else {
