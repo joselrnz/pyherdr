@@ -117,6 +117,9 @@ name = "prod-1"
 connection = "host1"
 command = "uptime"
 start_order = 20
+health_check = "systemctl is-active app"
+health_match = "active"
+health_timeout_ms = 5000
 
 [profiles.ops.panes.env]
 HOST_ROLE = "api"
@@ -144,6 +147,9 @@ send = "uptime"
         self.assertEqual(config.profiles["ops"].env, {"APP_ENV": "prod"})
         self.assertEqual(config.profiles["ops"].panes[1].connection, "host10")
         self.assertEqual(config.profiles["ops"].panes[0].env, {"HOST_ROLE": "api"})
+        self.assertEqual(config.profiles["ops"].panes[0].health_check, "systemctl is-active app")
+        self.assertEqual(config.profiles["ops"].panes[0].health_match, "active")
+        self.assertEqual(config.profiles["ops"].panes[0].health_timeout_ms, 5000)
         self.assertEqual(config.profiles["ops"].panes[1].start_order, 10)
         self.assertEqual(config.workflows["health"].steps[0].pane, "prod-1")
 

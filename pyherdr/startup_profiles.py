@@ -119,6 +119,10 @@ def validate_startup_config(config: Config, *, profile_name: str | None = None) 
                 errors.append(f"profile {name} pane {pane.name} references missing connection {pane.connection}")
             if not pane.connection and not pane.command:
                 warnings.append(f"profile {name} pane {pane.name} has no command or connection")
+            if pane.health_check and not pane.health_match:
+                warnings.append(f"profile {name} pane {pane.name} has a health_check without health_match")
+            if pane.health_timeout_ms < 1:
+                errors.append(f"profile {name} pane {pane.name} health_timeout_ms must be positive")
         pane_names_by_profile[name] = seen
 
     for name, workflow in config.workflows.items():
@@ -174,6 +178,14 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
     panes: list[dict[str, Any]] = []
     for index, pane in enumerate(profile.panes):
         env = {**profile.env, **pane.env}
+        health = None
+        if pane.health_check:
+            health = {
+                "command": pane.health_check,
+                "match": pane.health_match,
+                "timeout_ms": pane.health_timeout_ms,
+                "regex": pane.health_regex,
+            }
         panes.append(
             {
                 "name": pane.name,
@@ -185,6 +197,7 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
                 "env": env,
                 "start_order": pane.start_order,
                 "profile_index": index,
+                "health": health,
             }
         )
     start_sequence = [

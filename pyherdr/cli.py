@@ -823,6 +823,10 @@ def run_profile(args) -> int:
                 if "error" in start_response:
                     return print_response(start_response)
                 started_panes_by_name[str(pane_plan["name"])]["started"] = True
+        health_execution = _execute_profile_health_checks(info, plan["panes"], pane_ids_by_name)
+        if health_execution.get("error"):
+            print(json.dumps({"type": "profile_start", "ok": False, "error": health_execution["error"]}, indent=2))
+            return 1
         workflow_execution = _execute_profile_workflow(info, plan.get("workflow"), pane_ids_by_name)
         if workflow_execution.get("error"):
             print(json.dumps({"type": "profile_start", "ok": False, "error": workflow_execution["error"]}, indent=2))
@@ -837,6 +841,7 @@ def run_profile(args) -> int:
                     "layout": plan["layout"],
                     "layout_tree": applied_layout,
                     "panes": started_panes,
+                    "health_execution": health_execution,
                     "workflow": plan["workflow"],
                     "workflow_execution": workflow_execution,
                 },
@@ -861,6 +866,95 @@ def _ordered_profile_panes(panes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         panes,
         key=lambda pane: (int(pane.get("start_order") or 0), int(pane.get("profile_index") or 0)),
     )
+
+
+def _execute_profile_health_checks(
+    info: ServerInfo,
+    panes: list[dict[str, Any]],
+    pane_ids_by_name: dict[str, str],
+) -> dict:
+    checks: list[dict[str, Any]] = []
+    for pane in panes:
+        health = pane.get("health")
+        if not health:
+            continue
+        pane_name = str(pane.get("name") or "")
+        pane_id = pane_ids_by_name.get(pane_name)
+        if not pane_id:
+            return {"checked": False, "checks": checks, "error": f"health pane not started: {pane_name}"}
+        command = str(health.get("command") or "")
+        match = str(health.get("match") or "")
+        timeout_ms = int(health.get("timeout_ms") or 10000)
+        regex = bool(health.get("regex"))
+        if command:
+            text_response = request(
+                info,
+                {"id": "profile", "method": "pane.send_text", "params": {"pane_id": pane_id, "text": command}},
+            )
+            if "error" in text_response:
+                return {"checked": False, "checks": checks, "error": text_response["error"]}
+            key_response = request(
+                info,
+                {"id": "profile", "method": "pane.send_key", "params": {"pane_id": pane_id, "key": "enter"}},
+            )
+            if "error" in key_response:
+                return {"checked": False, "checks": checks, "error": key_response["error"]}
+        if not match:
+            checks.append(
+                {
+                    "pane": pane_name,
+                    "pane_id": pane_id,
+                    "command": command,
+                    "match": match,
+                    "matched": None,
+                    "sent": bool(command),
+                }
+            )
+            continue
+        matched = _wait_for_profile_health_match(info, pane_id, match, regex=regex, timeout_ms=timeout_ms)
+        checks.append(
+            {
+                "pane": pane_name,
+                "pane_id": pane_id,
+                "command": command,
+                "match": match,
+                "regex": regex,
+                "timeout_ms": timeout_ms,
+                "matched": matched.get("matched", False),
+            }
+        )
+        if matched.get("error"):
+            return {"checked": False, "checks": checks, "error": matched["error"]}
+        if not matched.get("matched", False):
+            return {
+                "checked": False,
+                "checks": checks,
+                "error": f"health check timed out for pane {pane_name}: {match}",
+            }
+    return {"checked": bool(checks), "checks": checks}
+
+
+def _wait_for_profile_health_match(
+    info: ServerInfo,
+    pane_id: str,
+    match: str,
+    *,
+    regex: bool,
+    timeout_ms: int,
+) -> dict:
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    pattern = re.compile(match) if regex else None
+    output = ""
+    while time.monotonic() < deadline:
+        response = request(info, {"id": "profile", "method": "pane.read", "params": {"pane_id": pane_id, "lines": 200}})
+        if "error" in response:
+            return {"matched": False, "error": response["error"]}
+        output = str(response.get("result", {}).get("output", ""))
+        matched = pattern.search(output) is not None if pattern else match in output
+        if matched:
+            return {"matched": True}
+        time.sleep(0.2)
+    return {"matched": False, "output_tail": output[-500:]}
 
 
 def _execute_profile_workflow(

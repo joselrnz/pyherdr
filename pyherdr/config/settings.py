@@ -154,6 +154,10 @@ class ProfilePaneConfig(_Section):
     tab: str = ""
     env: dict[str, str] = Field(default_factory=dict)
     start_order: int = 0
+    health_check: str = ""
+    health_match: str = ""
+    health_timeout_ms: int = 10000
+    health_regex: bool = False
 
 
 class ProfileConfig(_Section):

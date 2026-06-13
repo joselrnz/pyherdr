@@ -463,6 +463,9 @@ class CliTests(unittest.TestCase):
                             command="uptime",
                             env={"HOST_ROLE": "api", "SHARED": "pane"},
                             start_order=10,
+                            health_check="systemctl is-active app",
+                            health_match="active",
+                            health_timeout_ms=1000,
                         ),
                         ProfilePaneConfig(
                             name="logs",
@@ -509,6 +512,8 @@ class CliTests(unittest.TestCase):
                 return {"result": {"type": "pane_text_sent"}}
             if method == "pane.send_key":
                 return {"result": {"type": "pane_key_sent"}}
+            if method == "pane.read":
+                return {"result": {"output": "app active\n"}}
             raise AssertionError(method)
 
         stdout = StringIO()
@@ -544,11 +549,32 @@ class CliTests(unittest.TestCase):
         sent_text = [
             (call["params"]["pane_id"], call["params"]["text"]) for call in calls if call["method"] == "pane.send_text"
         ]
-        self.assertEqual(sent_text, [("pane-prod", "systemctl status app"), ("pane-logs", "grep ERROR app.log")])
+        self.assertEqual(
+            sent_text,
+            [
+                ("pane-prod", "systemctl is-active app"),
+                ("pane-prod", "systemctl status app"),
+                ("pane-logs", "grep ERROR app.log"),
+            ],
+        )
         sent_keys = [
             (call["params"]["pane_id"], call["params"]["key"]) for call in calls if call["method"] == "pane.send_key"
         ]
-        self.assertEqual(sent_keys, [("pane-prod", "enter")])
+        self.assertEqual(sent_keys, [("pane-prod", "enter"), ("pane-prod", "enter")])
+        self.assertEqual(
+            payload["health_execution"]["checks"],
+            [
+                {
+                    "pane": "prod",
+                    "pane_id": "pane-prod",
+                    "command": "systemctl is-active app",
+                    "match": "active",
+                    "regex": False,
+                    "timeout_ms": 1000,
+                    "matched": True,
+                }
+            ],
+        )
         self.assertEqual(
             payload["workflow_execution"]["steps"],
             [

@@ -64,6 +64,9 @@ class StartupProfileTests(unittest.TestCase):
                             command="uptime",
                             env={"REGION": "eu"},
                             start_order=20,
+                            health_check="systemctl is-active app",
+                            health_match="active",
+                            health_timeout_ms=5000,
                         ),
                         ProfilePaneConfig(name="local", command="pwsh", start_order=10),
                     ],
@@ -78,6 +81,15 @@ class StartupProfileTests(unittest.TestCase):
         self.assertEqual(plan["layout"], "main-left")
         self.assertEqual(plan["panes"][0]["command"], "ssh ops@prod.example.com uptime")
         self.assertEqual(plan["panes"][0]["env"], {"APP_ENV": "prod", "REGION": "eu"})
+        self.assertEqual(
+            plan["panes"][0]["health"],
+            {
+                "command": "systemctl is-active app",
+                "match": "active",
+                "timeout_ms": 5000,
+                "regex": False,
+            },
+        )
         self.assertEqual(plan["panes"][1]["env"], {"APP_ENV": "prod", "REGION": "us"})
         self.assertEqual(plan["start_sequence"], ["local", "prod"])
         self.assertEqual(plan["workflow"]["steps"][0]["pane"], "prod")
