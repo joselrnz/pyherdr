@@ -132,9 +132,19 @@ def _copy_app_text(app: object, text: str) -> ClipboardResult:
 
 
 def _profile_cli_command(action: str, profile_name: str, workflow_name: str = "") -> str:
+    if action == "open":
+        start_args = ["pyherdr", "profile", "start", profile_name]
+        if workflow_name:
+            start_args.extend(["--workflow", workflow_name])
+        attach_args = ["pyherdr", "profile", "attach", profile_name]
+        return f"{_shell_command(start_args)} && {_shell_command(attach_args)}"
     args = ["pyherdr", "profile", action, profile_name]
     if workflow_name and action == "start":
         args.extend(["--workflow", workflow_name])
+    return _shell_command(args)
+
+
+def _shell_command(args: list[str]) -> str:
     if os.name == "nt":
         return subprocess.list2cmdline(args)
     return " ".join(shlex.quote(arg) for arg in args)
@@ -1427,7 +1437,7 @@ class ProfilePickerScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="profile-box"):
             yield VerticalScroll(id="profile-list")
-            yield Static("click start, probe, attach, or stop · esc close", id="profile-foot")
+            yield Static("click start, open, probe, attach, or stop · esc close", id="profile-foot")
 
     async def on_mount(self) -> None:
         self.query_one("#profile-box", Vertical).border_title = "startup profiles"
@@ -1447,6 +1457,7 @@ class ProfilePickerScreen(ModalScreen[None]):
             rows.append(self._action_row(profile_name, "attach", "", workflows, ""))
             rows.append(self._action_row(profile_name, "stop", "", workflows, ""))
             rows.append(self._action_row(profile_name, "probe", "", workflows, status))
+            rows.append(self._action_row(profile_name, "open", "", workflows, status))
         await listing.mount(*rows)
 
     def _action_row(
@@ -1464,6 +1475,8 @@ class ProfilePickerScreen(ModalScreen[None]):
             action_style = "#f38ba8"
         elif action == "probe":
             action_style = "#f9e2af"
+        elif action == "open":
+            action_style = "#a6e3a1"
         else:
             action_style = "#89b4fa"
         label.append(f"{action:<6}", style=action_style)
@@ -1472,6 +1485,8 @@ class ProfilePickerScreen(ModalScreen[None]):
             label.append(f"  --workflow {workflow_name}", style="#a6e3a1")
             if status:
                 label.append(f" · {status}", style="#6c7086")
+        elif action == "open":
+            label.append(f"  start and attach · {status}", style="#6c7086")
         elif action == "probe":
             label.append(f"  {status or 'test SSH connections'}", style="#6c7086")
         else:

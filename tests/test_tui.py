@@ -1768,6 +1768,23 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.tabs, 1)
         self.assertIn(("new-pane", "pyherdr profile probe ops"), client.started)
 
+    async def test_profile_picker_launches_open_command(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        app._config = Config(
+            profiles={"ops": ProfileConfig(panes=[ProfilePaneConfig(name="api", connection="prod")])},
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._run_named_action("profiles")
+            await pilot.pause()
+            await pilot.click("#profile-4")
+            await pilot.pause()
+            await pilot.pause()
+
+        self.assertEqual(client.tabs, 1)
+        self.assertIn(("new-pane", "pyherdr profile start ops && pyherdr profile attach ops"), client.started)
+
     async def test_profile_picker_shows_inline_connection_status(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
         app._config = Config(
