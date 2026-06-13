@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pyherdr.config import Config, ProfileConfig, UiConfig, WorkflowConfig
+from pyherdr.config import Config, ProfileConfig, ProfilePaneConfig, UiConfig, WorkflowConfig
 from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
@@ -1742,6 +1742,23 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.tabs, 1)
         self.assertIn(("new-pane", "pyherdr profile start ops --workflow health"), client.started)
+
+    async def test_profile_picker_launches_profile_probe_command(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        app._config = Config(
+            profiles={"ops": ProfileConfig(panes=[ProfilePaneConfig(name="api", connection="prod")])},
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._run_named_action("profiles")
+            await pilot.pause()
+            await pilot.click("#profile-3")
+            await pilot.pause()
+            await pilot.pause()
+
+        self.assertEqual(client.tabs, 1)
+        self.assertIn(("new-pane", "pyherdr profile probe ops"), client.started)
 
     async def test_prefix_then_a_cycles_attention_panes(self):
         client = FakeClient()

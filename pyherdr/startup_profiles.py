@@ -170,6 +170,30 @@ def profile_inventory(config: Config) -> dict[str, Any]:
     }
 
 
+def profile_remote_connections(config: Config, profile: ProfileConfig) -> list[dict[str, Any]]:
+    connections: dict[str, dict[str, Any]] = {}
+    for pane in profile.panes:
+        name = pane.connection
+        if not name:
+            continue
+        connection = config.connections.get(name)
+        if connection is None or connection.type == ConnectionType.LOCAL:
+            continue
+        record = connections.get(name)
+        if record is None:
+            target = ssh_target(connection)
+            record = {
+                "name": name,
+                "host": connection.host,
+                "target": target,
+                "pane_names": [],
+                "probe_command": [*ssh_base_command(connection, probe=True), target, "pyherdr", "--version"],
+            }
+            connections[name] = record
+        record["pane_names"].append(pane.name)
+    return list(connections.values())
+
+
 def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None = None) -> dict[str, Any]:
     if profile_name not in config.profiles:
         raise ValueError(f"profile {profile_name} does not exist")
@@ -224,6 +248,7 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
         "layout": profile.layout,
         "layout_tree": build_profile_layout(profile),
         "panes": panes,
+        "remote_connections": profile_remote_connections(config, profile),
         "start_sequence": start_sequence,
         "workflow": None
         if workflow is None

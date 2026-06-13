@@ -1425,7 +1425,7 @@ class ProfilePickerScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="profile-box"):
             yield VerticalScroll(id="profile-list")
-            yield Static("click start, attach, or stop · esc close", id="profile-foot")
+            yield Static("click start, probe, attach, or stop · esc close", id="profile-foot")
 
     async def on_mount(self) -> None:
         self.query_one("#profile-box", Vertical).border_title = "startup profiles"
@@ -1443,16 +1443,25 @@ class ProfilePickerScreen(ModalScreen[None]):
                 rows.append(self._action_row(profile_name, "start", workflow_name, workflows))
             rows.append(self._action_row(profile_name, "attach", "", workflows))
             rows.append(self._action_row(profile_name, "stop", "", workflows))
+            rows.append(self._action_row(profile_name, "probe", "", workflows))
         await listing.mount(*rows)
 
     def _action_row(self, profile_name: str, action: str, workflow_name: str, workflows: list[str]) -> Clickable:
         index = len(self._actions)
         self._actions.append((action, profile_name, workflow_name))
         label = Text()
-        label.append(f"{action:<6}", style="#89b4fa" if action != "stop" else "#f38ba8")
+        if action == "stop":
+            action_style = "#f38ba8"
+        elif action == "probe":
+            action_style = "#f9e2af"
+        else:
+            action_style = "#89b4fa"
+        label.append(f"{action:<6}", style=action_style)
         label.append(f" {profile_name}", style="bold")
         if workflow_name:
             label.append(f"  --workflow {workflow_name}", style="#a6e3a1")
+        elif action == "probe":
+            label.append("  test SSH connections", style="#6c7086")
         else:
             label.append(f"  {len(workflows)} workflow{'s' if len(workflows) != 1 else ''}", style="#6c7086")
         return Clickable(label, "profile_pick", str(index), id=f"profile-{index}", classes="profile-row")

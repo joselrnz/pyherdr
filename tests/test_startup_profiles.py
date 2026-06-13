@@ -142,6 +142,27 @@ class StartupProfileTests(unittest.TestCase):
         self.assertEqual(plan["panes"][1]["env"], {"APP_ENV": "prod", "REGION": "us"})
         self.assertEqual(plan["start_sequence"], ["local", "prod"])
         self.assertEqual(plan["workflow"]["steps"][0]["pane"], "prod")
+        self.assertEqual(
+            plan["remote_connections"],
+            [
+                {
+                    "name": "prod",
+                    "host": "prod.example.com",
+                    "target": "ops@prod.example.com",
+                    "pane_names": ["prod"],
+                    "probe_command": [
+                        "ssh",
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "ConnectTimeout=10",
+                        "ops@prod.example.com",
+                        "pyherdr",
+                        "--version",
+                    ],
+                }
+            ],
+        )
 
     def test_build_profile_layout_uses_template_when_available(self):
         config = Config(

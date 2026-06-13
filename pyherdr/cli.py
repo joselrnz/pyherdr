@@ -188,6 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile_plan = profile_sub.add_parser("plan", help="print generated pane commands for a profile")
     profile_plan.add_argument("name")
     profile_plan.add_argument("--workflow", help="include workflow steps for this profile")
+    profile_plan.add_argument("--probe", action="store_true", help="run SSH probes and include results")
     profile_start = profile_sub.add_parser("start", help="create and start panes from a profile")
     profile_start.add_argument("name")
     profile_start.add_argument("--workflow", help="include workflow steps in the startup summary")
@@ -782,6 +783,11 @@ def run_profile(args) -> int:
     if args.profile_command == "plan":
         try:
             payload = plan_profile(config, args.name, workflow_name=args.workflow)
+            if args.probe:
+                connections = _profile_probe_connections(config, args.name)
+                probe_results = [probe_connection(name, connection) for name, connection in connections]
+                payload["probe_ok"] = all(result.get("ok") for result in probe_results)
+                payload["probe_results"] = probe_results
         except ValueError as exc:
             print(json.dumps({"type": "profile_plan", "ok": False, "error": str(exc)}, indent=2))
             return 1

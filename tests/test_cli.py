@@ -969,6 +969,34 @@ class CliTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual([result["connection"] for result in payload["results"]], ["prod", "logs"])
 
+    def test_profile_plan_can_include_probe_results(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config, ConnectionConfig, ProfileConfig, ProfilePaneConfig
+
+        args = build_parser().parse_args(["profile", "plan", "ops", "--probe"])
+        config = Config(
+            connections={"prod": ConnectionConfig(host="prod.example.com", user="ops")},
+            profiles={"ops": ProfileConfig(panes=[ProfilePaneConfig(name="api", connection="prod")])},
+        )
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=config),
+            patch(
+                "pyherdr.cli.probe_connection",
+                return_value={"type": "remote_probe", "connection": "prod", "host": "prod.example.com", "ok": True},
+            ) as probe,
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_profile(args)
+
+        self.assertEqual(exit_code, 0)
+        probe.assert_called_once_with("prod", config.connections["prod"])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["type"], "profile_plan")
+        self.assertTrue(payload["probe_ok"])
+        self.assertEqual(payload["probe_results"][0]["connection"], "prod")
+
     def test_plugin_validate_parses_manifest_path(self):
         args = build_parser().parse_args(["plugin", "validate", "plugin.json"])
 
