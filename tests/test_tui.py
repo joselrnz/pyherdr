@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pyherdr.config import Config, UiConfig
+from pyherdr.config import Config, ProfileConfig, UiConfig, WorkflowConfig
 from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
@@ -17,6 +17,7 @@ from pyherdr.presentation.tui import (
     HelpScreen,
     NavigatorScreen,
     PaneView,
+    ProfilePickerScreen,
     PyHerdrTui,
     RenameScreen,
     ShellPickerScreen,
@@ -1713,6 +1714,34 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             self.assertIsInstance(app.screen, WorktreeScreen)
+
+    async def test_profile_action_opens_profile_picker(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app._config = Config(profiles={"ops": ProfileConfig()})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._run_named_action("profiles")
+            await pilot.pause()
+
+            self.assertIsInstance(app.screen, ProfilePickerScreen)
+
+    async def test_profile_picker_launches_profile_workflow_command(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        app._config = Config(
+            profiles={"ops": ProfileConfig()},
+            workflows={"health": WorkflowConfig(profile="ops")},
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            app._run_named_action("profiles")
+            await pilot.pause()
+            await pilot.click("#profile-1")
+            await pilot.pause()
+            await pilot.pause()
+
+        self.assertEqual(client.tabs, 1)
+        self.assertIn(("new-pane", "pyherdr profile start ops --workflow health"), client.started)
 
     async def test_prefix_then_a_cycles_attention_panes(self):
         client = FakeClient()

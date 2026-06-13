@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 import queue
+import shlex
 import shutil
 import subprocess
 import threading
@@ -82,6 +83,7 @@ _DEFAULT_PREFIX_ACTIONS = {
     "P": "rename_pane",
     "N": "new_workspace",
     "W": "worktrees",
+    "O": "profiles",
     "F": "fanout",
     "a": "jump_attention",
     "b": "toggle_sidebar",
@@ -127,6 +129,15 @@ def _copy_app_text(app: object, text: str) -> ClipboardResult:
         backends.append(TextualClipboardBackend(copier))
     backends.append(LocalClipboardBackend())
     return copy_text(text, backends)
+
+
+def _profile_cli_command(action: str, profile_name: str, workflow_name: str = "") -> str:
+    args = ["pyherdr", "profile", action, profile_name]
+    if workflow_name and action == "start":
+        args.extend(["--workflow", workflow_name])
+    if os.name == "nt":
+        return subprocess.list2cmdline(args)
+    return " ".join(shlex.quote(arg) for arg in args)
 
 
 def _default_shell() -> str:
@@ -372,6 +383,7 @@ def _help_text(palette: Palette) -> Text:
     group("workspaces")
     row("N", "new workspace (folder picker)")
     row("W", "worktrees")
+    row("O", "startup profiles")
     row("w", "next workspace")
     row("a", "jump to blocked/done")
     row("{ / }", "move workspace up / down")
@@ -1371,6 +1383,89 @@ class WorktreeScreen(ModalScreen[None]):
         self.dismiss()
         if self._on_changed is not None:
             self._on_changed(True)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
+
+
+class ProfilePickerScreen(ModalScreen[None]):
+    """Pick a startup profile action and run it in a visible terminal tab."""
+
+    DEFAULT_CSS = """
+    ProfilePickerScreen { align: center middle; background: $ph-base 70%; }
+    #profile-box {
+        width: 86;
+        height: auto;
+        max-height: 90%;
+        background: $ph-mantle;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 1 1;
+    }
+    #profile-list { height: auto; max-height: 18; border: round $ph-surface0; background: $ph-base; }
+    .profile-row { width: 1fr; color: $ph-text; padding: 0 1; }
+    .profile-row:hover { background: $ph-surface0; }
+    #profile-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(
+        self,
+        profiles: dict[str, Any],
+        workflows: dict[str, Any],
+        on_pick: Callable[[str, str, str], None],
+    ) -> None:
+        super().__init__()
+        self._profiles = profiles
+        self._workflows = workflows
+        self._on_pick = on_pick
+        self._actions: list[tuple[str, str, str]] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="profile-box"):
+            yield VerticalScroll(id="profile-list")
+            yield Static("click start, attach, or stop · esc close", id="profile-foot")
+
+    async def on_mount(self) -> None:
+        self.query_one("#profile-box", Vertical).border_title = "startup profiles"
+        listing = self.query_one("#profile-list", VerticalScroll)
+        if not self._profiles:
+            await listing.mount(Static("no startup profiles configured", classes="profile-row"))
+            return
+        rows: list[Widget] = []
+        for profile_name in sorted(self._profiles):
+            workflows = sorted(
+                name for name, workflow in self._workflows.items() if getattr(workflow, "profile", "") == profile_name
+            )
+            rows.append(self._action_row(profile_name, "start", "", workflows))
+            for workflow_name in workflows:
+                rows.append(self._action_row(profile_name, "start", workflow_name, workflows))
+            rows.append(self._action_row(profile_name, "attach", "", workflows))
+            rows.append(self._action_row(profile_name, "stop", "", workflows))
+        await listing.mount(*rows)
+
+    def _action_row(self, profile_name: str, action: str, workflow_name: str, workflows: list[str]) -> Clickable:
+        index = len(self._actions)
+        self._actions.append((action, profile_name, workflow_name))
+        label = Text()
+        label.append(f"{action:<6}", style="#89b4fa" if action != "stop" else "#f38ba8")
+        label.append(f" {profile_name}", style="bold")
+        if workflow_name:
+            label.append(f"  --workflow {workflow_name}", style="#a6e3a1")
+        else:
+            label.append(f"  {len(workflows)} workflow{'s' if len(workflows) != 1 else ''}", style="#6c7086")
+        return Clickable(label, "profile_pick", str(index), id=f"profile-{index}", classes="profile-row")
+
+    def on_activated(self, message: Activated) -> None:
+        message.stop()
+        if message.action != "profile_pick" or message.arg is None:
+            return
+        index = int(message.arg)
+        if 0 <= index < len(self._actions):
+            action, profile_name, workflow_name = self._actions[index]
+            self.dismiss()
+            self._on_pick(action, profile_name, workflow_name)
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
@@ -3133,6 +3228,8 @@ class PyHerdrTui(App):
             self._open_new_workspace()
         elif action == "worktrees":
             self._open_worktrees()
+        elif action == "profiles":
+            self._open_profiles()
         elif action == "close_pane" and self._pane_id:
             self._client.close_pane(self._pane_id)
             self._pane_id = None
@@ -3338,6 +3435,7 @@ class PyHerdrTui(App):
         elif action in (
             "help", "palette", "settings", "detach", "quit",
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "worktrees",
+            "profiles",
             "jump_attention",
             "copy_mode", "open_url",
             "rename_pane", "toggle_sidebar", "toggle_agent_scope",
@@ -3411,6 +3509,15 @@ class PyHerdrTui(App):
             return
         self.push_screen(FanoutScreen(choices, self._fanout_submit))
 
+    def _open_profiles(self) -> None:
+        self.push_screen(
+            ProfilePickerScreen(self._config.profiles, self._config.workflows, self._profile_picker_submit)
+        )
+
+    def _profile_picker_submit(self, action: str, profile_name: str, workflow_name: str) -> None:
+        command = _profile_cli_command(action, profile_name, workflow_name)
+        self.run_worker(self._new_tab_with_shell(command), exclusive=True)
+
     def _fanout_submit(self, selector: str, command: str, dry_run: bool) -> dict[str, Any]:
         return self._client.pane_fanout([selector], command, enter=True, dry_run=dry_run, confirm_risky=not dry_run)
 
@@ -3468,6 +3575,7 @@ class PyHerdrTui(App):
         ("Previous tab", "prev_tab"),
         ("New workspace…", "new_workspace"),
         ("Worktrees…", "worktrees"),
+        ("Startup profiles…", "profiles"),
         ("Jump to attention", "jump_attention"),
         ("Move workspace up", "move_workspace_up"),
         ("Move workspace down", "move_workspace_down"),
