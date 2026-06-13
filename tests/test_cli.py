@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -375,6 +376,39 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.profile_command, "plan")
         self.assertEqual(args.name, "ops")
         self.assertEqual(args.workflow, "health")
+        attach = build_parser().parse_args(["profile", "attach", "ops"])
+        stop = build_parser().parse_args(["profile", "stop", "ops"])
+
+        self.assertEqual(attach.profile_command, "attach")
+        self.assertEqual(stop.profile_command, "stop")
+
+    def test_profile_attach_and_stop_use_profile_session_name(self):
+        from pyherdr.cli import run_profile
+        from pyherdr.config import Config
+
+        attach_args = build_parser().parse_args(["profile", "attach", "ops/team"])
+        stop_args = build_parser().parse_args(["profile", "stop", "ops/team"])
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=Config()),
+            patch("pyherdr.cli._attach_session", return_value=0) as attach_session,
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(run_profile(attach_args), 0)
+        attach_session.assert_called_once_with("profile-ops-team")
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.load_config", return_value=Config()),
+            patch("pyherdr.cli._stop_session", return_value=True) as stop_session,
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(run_profile(stop_args), 0)
+
+        stop_session.assert_called_once_with("profile-ops-team")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["session"], "profile-ops-team")
+        self.assertTrue(payload["stopped"])
 
     def test_profile_list_prints_inventory_summary(self):
         from pyherdr.cli import run_profile
@@ -487,6 +521,12 @@ class CliTests(unittest.TestCase):
             },
         )
         calls: list[dict] = []
+        sessions_seen: list[str | None] = []
+        restored_sessions: list[str | None] = []
+
+        def fake_start_background() -> ServerInfo:
+            sessions_seen.append(os.environ.get("PYHERDR_SESSION"))
+            return ServerInfo("127.0.0.1", 1, 2, "state.json")
 
         def fake_request(_info: ServerInfo, payload: dict) -> dict:
             calls.append(payload)
@@ -519,15 +559,20 @@ class CliTests(unittest.TestCase):
         stdout = StringIO()
         with (
             patch("pyherdr.cli.load_config", return_value=config),
-            patch("pyherdr.cli.start_background", return_value=ServerInfo("127.0.0.1", 1, 2, "state.json")),
+            patch("pyherdr.cli.start_background", side_effect=fake_start_background),
             patch("pyherdr.cli.request", fake_request),
+            patch.dict("os.environ", {"PYHERDR_SESSION": "before"}, clear=False),
             redirect_stdout(stdout),
         ):
             exit_code = run_profile(args)
+            restored_sessions.append(os.environ.get("PYHERDR_SESSION"))
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["type"], "profile_start")
+        self.assertEqual(payload["session"], "profile-ops")
+        self.assertEqual(sessions_seen, ["profile-ops"])
+        self.assertEqual(restored_sessions, ["before"])
         self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod", "logs"])
         start_commands = [call["params"]["command"] for call in calls if call["method"] == "pane.start"]
         self.assertEqual(start_commands, ["ssh ops@prod.example.com uptime", "tail -f app.log", "pwsh"])

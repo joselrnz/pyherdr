@@ -187,6 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
     profile_start = profile_sub.add_parser("start", help="create and start panes from a profile")
     profile_start.add_argument("name")
     profile_start.add_argument("--workflow", help="include workflow steps in the startup summary")
+    profile_attach = profile_sub.add_parser("attach", help="attach the TUI to a profile session")
+    profile_attach.add_argument("name")
+    profile_stop = profile_sub.add_parser("stop", help="stop a profile session")
+    profile_stop.add_argument("name")
 
     notification = sub.add_parser("notification", help="show a notification")
     notification_sub = notification.add_subparsers(dest="notification_command", required=True)
@@ -621,21 +625,9 @@ def run_session(args) -> int:
         print(json.dumps({"sessions": sessions}, indent=2))
         return 0
     if args.session_command == "attach":
-        os.environ["PYHERDR_SESSION"] = args.name
-        from .presentation.tui import main as tui_main
-
-        tui_main()
-        return 0
+        return _attach_session(args.name)
     if args.session_command == "stop":
-        info = read_server_info(session_runtime_dir(args.name) / "server.json")
-        stopped = False
-        if info and ping(info):
-            try:
-                request(info, {"id": "cli", "method": "server.stop", "params": {}}, timeout=1.0)
-                stopped = True
-            except (OSError, ConnectionError, json.JSONDecodeError):
-                stopped = False
-        remove_server_info(session_runtime_dir(args.name) / "server.json")
+        stopped = _stop_session(args.name)
         print(json.dumps({"stopped": stopped}, indent=2))
         return 0 if stopped else 1
     if args.session_command == "delete":
@@ -682,6 +674,28 @@ def run_session(args) -> int:
     return 2
 
 
+def _attach_session(name: str) -> int:
+    os.environ["PYHERDR_SESSION"] = name
+    from .presentation.tui import main as tui_main
+
+    tui_main()
+    return 0
+
+
+def _stop_session(name: str) -> bool:
+    info_path = session_runtime_dir(name) / "server.json"
+    info = read_server_info(info_path)
+    stopped = False
+    if info and ping(info):
+        try:
+            request(info, {"id": "cli", "method": "server.stop", "params": {}}, timeout=1.0)
+            stopped = True
+        except (OSError, ConnectionError, json.JSONDecodeError):
+            stopped = False
+    remove_server_info(info_path)
+    return stopped
+
+
 def run_debug(args) -> int:
     if args.debug_command == "bundle":
         path = create_debug_bundle(Path(args.output))
@@ -708,6 +722,18 @@ def run_plugin(args) -> int:
 
 def run_profile(args) -> int:
     config = load_config()
+    if args.profile_command == "attach":
+        return _attach_session(_profile_session_name(args.name))
+    if args.profile_command == "stop":
+        session_name = _profile_session_name(args.name)
+        stopped = _stop_session(session_name)
+        print(
+            json.dumps(
+                {"type": "profile_stop", "profile": args.name, "session": session_name, "stopped": stopped},
+                indent=2,
+            )
+        )
+        return 0 if stopped else 1
     if args.profile_command == "list":
         print(json.dumps(profile_inventory(config), indent=2))
         return 0
@@ -739,7 +765,16 @@ def run_profile(args) -> int:
         except ValueError as exc:
             print(json.dumps({"type": "profile_start", "ok": False, "error": str(exc)}, indent=2))
             return 1
-        info = start_background()
+        session_name = _profile_session_name(args.name)
+        previous_session = os.environ.get("PYHERDR_SESSION")
+        os.environ["PYHERDR_SESSION"] = session_name
+        try:
+            info = start_background()
+        finally:
+            if previous_session is None:
+                os.environ.pop("PYHERDR_SESSION", None)
+            else:
+                os.environ["PYHERDR_SESSION"] = previous_session
         workspace_label = plan["workspace"] or args.name
         workspace_response = request(
             info,
@@ -837,6 +872,7 @@ def run_profile(args) -> int:
                     "type": "profile_start",
                     "ok": True,
                     "profile": args.name,
+                    "session": session_name,
                     "workspace": workspace,
                     "layout": plan["layout"],
                     "layout_tree": applied_layout,
@@ -850,6 +886,11 @@ def run_profile(args) -> int:
         )
         return 0
     return 2
+
+
+def _profile_session_name(profile_name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", profile_name.strip()).strip("-")
+    return f"profile-{safe or 'profile'}"
 
 
 def _replace_layout_pane_ids(layout: dict[str, Any], pane_ids_by_name: dict[str, str]) -> dict[str, Any]:
