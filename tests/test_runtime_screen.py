@@ -139,13 +139,21 @@ class TerminalScreenTests(unittest.TestCase):
         self.assertIn("line0", rendered)
         self.assertNotIn("line7", rendered)
 
+    def test_styled_render_suppresses_terminal_underline_style(self):
+        screen = TerminalScreen(rows=3, cols=12)
+
+        screen.feed("\x1b[4m\x1b[2J\x1b[HClaude")
+
+        rendered = screen.render_styled()
+        self.assertIn("Claude", rendered)
+        self.assertNotIn("\x1b[0;4m", rendered)
+
     def test_styled_render_trims_style_only_blank_cells(self):
         screen = TerminalScreen(rows=3, cols=12)
 
         screen.feed("\x1b[4m\x1b[2J\x1b[HClaude")
 
         rendered = screen.render_styled()
-        self.assertIn("\x1b[0;4mClaude", rendered)
         self.assertNotIn("\x1b[0;4m      ", rendered)
 
     def test_styled_render_does_not_underline_blank_cells_between_text(self):
@@ -155,8 +163,20 @@ class TerminalScreenTests(unittest.TestCase):
 
         rendered = screen.render_styled()
 
-        self.assertIn("\x1b[0;4mA\x1b[0m \x1b[0;4mB", rendered)
+        self.assertIn("A B", rendered)
+        self.assertNotIn("\x1b[0;4m", rendered)
         self.assertNotIn("\x1b[0;4mA B", rendered)
+
+    def test_styled_render_does_not_underline_whitespace_cells_between_text(self):
+        screen = TerminalScreen(rows=1, cols=12)
+
+        screen.feed("\x1b[4mA\u00a0B\x1b[0m")
+
+        rendered = screen.render_styled()
+
+        self.assertIn("A\xa0B", rendered)
+        self.assertNotIn("\x1b[0;4m", rendered)
+        self.assertNotIn("\x1b[0;4mA\xa0B", rendered)
 
     def test_styled_render_keeps_padding_needed_for_cursor(self):
         screen = TerminalScreen(rows=1, cols=12)

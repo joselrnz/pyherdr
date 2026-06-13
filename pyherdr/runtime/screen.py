@@ -52,13 +52,14 @@ def _color_param(color: str, foreground: bool) -> str:
 def _sgr(char: object, reverse: bool) -> str:
     """Build the SGR parameter list for one pyte cell (cursor → reverse video)."""
     codes: list[str] = []
-    blank = _is_blank_cell(char)
     if getattr(char, "bold", False):
         codes.append("1")
     if getattr(char, "italics", False):
         codes.append("3")
-    if getattr(char, "underscore", False) and not blank:
-        codes.append("4")
+    # Textual/Rich renders ANSI underline much more prominently than Windows
+    # Terminal for agent TUIs like Claude Code, turning ordinary text into noisy
+    # full-pane rules. Preserve the text and colour state but suppress underline
+    # in PyHerdr's pane renderer.
     if bool(getattr(char, "reverse", False)) ^ reverse:
         codes.append("7")
     fg = _color_param(str(getattr(char, "fg", "default")), True)
@@ -71,8 +72,10 @@ def _sgr(char: object, reverse: bool) -> str:
 
 
 def _is_blank_cell(char: object) -> bool:
-    data = str(getattr(char, "data", "") or " ")
-    return data == " "
+    data = str(getattr(char, "data", ""))
+    if not data:
+        return True
+    return data.isspace()
 
 
 class TerminalScreen:
