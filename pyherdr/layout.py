@@ -440,6 +440,60 @@ def build_template_layout(template_id: str, pane_ids: list[str]) -> TileLayout:
     return TileLayout(root, pane_ids[0])
 
 
+def export_custom_layout(layout_id: str, layout: TileLayout, *, label: str = "") -> dict[str, Any]:
+    """Export a concrete pane layout as a reusable placeholder-based custom layout."""
+    normalized = str(layout_id or "").strip()
+    if not normalized:
+        raise ValueError("custom layout id is required")
+    pane_ids = layout.pane_ids()
+    placeholders = {pane_id: f"pane_{index}" for index, pane_id in enumerate(pane_ids, start=1)}
+    layout_data = layout.to_dict()
+    return {
+        "id": normalized,
+        "label": label or normalized,
+        "pane_count": len(pane_ids),
+        "layout": {
+            "root": _remap_node_dict(layout_data["root"], placeholders),
+            "focus": placeholders.get(str(layout_data.get("focus") or ""), placeholders.get(pane_ids[0], "")),
+        },
+    }
+
+
+def build_custom_layout(record: dict[str, Any], pane_ids: list[str]) -> TileLayout:
+    """Build a saved custom layout for concrete pane ids.
+
+    Custom layouts store placeholder leaves (``pane_1``, ``pane_2``...) so the
+    same shape can be applied to any tab/profile by remapping placeholders onto
+    the target pane order.
+    """
+    layout_data = record.get("layout") if "layout" in record else record
+    if not isinstance(layout_data, dict):
+        raise ValueError("custom layout must contain a layout object")
+    source = TileLayout.from_dict(layout_data)
+    placeholders = source.pane_ids()
+    pane_count = max(int(record.get("pane_count") or 0), len(placeholders))
+    if len(pane_ids) < pane_count:
+        raise ValueError(f"custom layout requires {pane_count} pane(s), got {len(pane_ids)}")
+    mapping = {placeholder: pane_ids[index] for index, placeholder in enumerate(placeholders)}
+    root = _remap_node_dict(layout_data["root"], mapping)
+    focus = mapping.get(str(layout_data.get("focus") or ""), pane_ids[0])
+    layout = TileLayout.from_dict({"root": root, "focus": focus})
+    for pane_id in pane_ids[pane_count:]:
+        layout.root = SplitNode(Direction.HORIZONTAL, 0.75, layout.root, PaneNode(pane_id))
+    return TileLayout(layout.root, layout.focus)
+
+
+def _remap_node_dict(node: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
+    if node.get("kind") == "pane":
+        pane_id = str(node["pane_id"])
+        return {**node, "pane_id": mapping.get(pane_id, pane_id)}
+    return {
+        **node,
+        "first": _remap_node_dict(node["first"], mapping),
+        "second": _remap_node_dict(node["second"], mapping),
+    }
+
+
 def _require_template(template_id: str) -> LayoutTemplate:
     normalized = str(template_id or "").strip().lower()
     for template in LAYOUT_TEMPLATES:

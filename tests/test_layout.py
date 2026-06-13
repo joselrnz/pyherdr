@@ -3,9 +3,13 @@ import unittest
 from pyherdr.layout import (
     Direction,
     NavDirection,
+    PaneNode,
     Rect,
+    SplitNode,
     TileLayout,
+    build_custom_layout,
     build_template_layout,
+    export_custom_layout,
     layout_template_records,
     split_rect,
 )
@@ -208,6 +212,30 @@ class LayoutTests(unittest.TestCase):
             build_template_layout("missing", ["a"])
         with self.assertRaises(ValueError):
             build_template_layout("grid-2x2", ["a", "b", "c"])
+
+    def test_custom_layout_export_and_rebuild_remaps_panes(self):
+        layout = TileLayout(
+            SplitNode(Direction.HORIZONTAL, 0.6, PaneNode("left"), PaneNode("right")),
+            "right",
+        )
+
+        record = export_custom_layout("wide", layout, label="Wide pair")
+        rebuilt = build_custom_layout(record, ["api", "logs", "shell"])
+
+        self.assertEqual(record["id"], "wide")
+        self.assertEqual(record["label"], "Wide pair")
+        self.assertEqual(record["pane_count"], 2)
+        self.assertEqual(record["layout"]["focus"], "pane_2")
+        self.assertEqual(rebuilt.pane_ids(), ["api", "logs", "shell"])
+        self.assertEqual(rebuilt.focus, "logs")
+        self.assertEqual(
+            [(pane.pane_id, pane.rect) for pane in rebuilt.panes(Rect(0, 0, 100, 20))],
+            [
+                ("api", Rect(0, 0, 45, 20)),
+                ("logs", Rect(45, 0, 30, 20)),
+                ("shell", Rect(75, 0, 25, 20)),
+            ],
+        )
 
 
 if __name__ == "__main__":

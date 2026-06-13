@@ -359,6 +359,15 @@ def build_parser() -> argparse.ArgumentParser:
     layout_apply.add_argument("template")
     layout_apply.add_argument("--workspace-id")
     layout_apply.add_argument("--tab-id")
+    layout_export = layout_sub.add_parser("export", help="export the current tab layout to a custom layout JSON file")
+    layout_export.add_argument("name")
+    layout_export.add_argument("--output", "-o")
+    layout_export.add_argument("--workspace-id")
+    layout_export.add_argument("--tab-id")
+    layout_import = layout_sub.add_parser("import", help="apply a custom layout JSON file")
+    layout_import.add_argument("path")
+    layout_import.add_argument("--workspace-id")
+    layout_import.add_argument("--tab-id")
 
     tab = sub.add_parser("tab", help="tab commands")
     tab_sub = tab.add_subparsers(dest="tab_command", required=True)
@@ -1497,6 +1506,47 @@ def run_layout(args) -> int:
                 "method": "layout.template.apply",
                 "params": {
                     "template": args.template,
+                    "workspace_id": args.workspace_id,
+                    "tab_id": args.tab_id,
+                },
+            }
+        )
+    elif args.layout_command == "export":
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "layout.custom.export",
+                "params": {
+                    "name": args.name,
+                    "workspace_id": args.workspace_id,
+                    "tab_id": args.tab_id,
+                },
+            }
+        )
+        if "error" in response or not args.output:
+            return print_response(response)
+        target = Path(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(response["result"]["layout"], indent=2), encoding="utf-8")
+        print(
+            json.dumps(
+                {
+                    "type": "layout_custom_export_file",
+                    "path": str(target),
+                    "layout": response["result"]["layout"],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    elif args.layout_command == "import":
+        custom = json.loads(Path(args.path).read_text(encoding="utf-8"))
+        response = ensure_request(
+            {
+                "id": "cli",
+                "method": "layout.custom.apply",
+                "params": {
+                    "layout": custom,
                     "workspace_id": args.workspace_id,
                     "tab_id": args.tab_id,
                 },

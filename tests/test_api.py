@@ -226,6 +226,48 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(tab.focused_pane_id, tab.panes[0].id)
         self.assertEqual(updated.focus, tab.panes[0].id)
 
+    def test_layout_custom_export_and_apply_roundtrip(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        workspace = state.focused_workspace
+        tab = workspace.focused_tab
+        first = tab.panes[0]
+        second = state.create_pane(workspace.id, tab.id, title="logs")
+        layout = TileLayout(SplitNode(Direction.HORIZONTAL, 0.7, PaneNode(first.id), PaneNode(second.id)), second.id)
+        tab.layout = layout.to_dict()
+        tab.focused_pane_id = second.id
+
+        exported = dispatch(
+            state,
+            {
+                "id": "export",
+                "method": "layout.custom.export",
+                "params": {"name": "wide", "workspace_id": workspace.id, "tab_id": tab.id},
+            },
+        )
+
+        self.assertEqual(exported["result"]["type"], "layout_custom_exported")
+        custom = exported["result"]["layout"]
+        self.assertEqual(custom["id"], "wide")
+        self.assertEqual(custom["pane_count"], 2)
+
+        new_tab = state.create_tab(workspace.id, "apply")
+        applied = dispatch(
+            state,
+            {
+                "id": "apply-custom",
+                "method": "layout.custom.apply",
+                "params": {"layout": custom, "workspace_id": workspace.id, "tab_id": new_tab.id},
+            },
+        )
+
+        self.assertEqual(applied["result"]["type"], "layout_custom_applied")
+        self.assertEqual(applied["result"]["pane_count"], 2)
+        self.assertEqual(len(new_tab.panes), 2)
+        rebuilt = TileLayout.from_dict(new_tab.layout)
+        self.assertEqual(rebuilt.pane_ids(), [pane.id for pane in new_tab.panes])
+        self.assertEqual(rebuilt.focus, new_tab.panes[1].id)
+        self.assertEqual(new_tab.focused_pane_id, new_tab.panes[1].id)
+
     def test_pane_read_includes_terminal_metadata(self):
         state = AppState.bootstrap(cwd="C:/work")
         pane = state.focused_workspace.focused_tab.focused_pane

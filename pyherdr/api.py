@@ -18,7 +18,9 @@ from .layout import (
     Direction,
     PaneNode,
     TileLayout,
+    build_custom_layout,
     build_template_layout,
+    export_custom_layout,
     layout_template_record,
     layout_template_records,
 )
@@ -69,6 +71,8 @@ def _dispatch_method(
         "notification.show": _notification_show,
         "layout.template.list": _layout_template_list,
         "layout.template.apply": _layout_template_apply,
+        "layout.custom.export": _layout_custom_export,
+        "layout.custom.apply": _layout_custom_apply,
         "workspace.create": _workspace_create,
         "workspace.get": _workspace_get,
         "workspace.list": _workspace_list,
@@ -216,12 +220,7 @@ def _layout_template_apply(
     state: AppState, params: dict[str, Any], _processes: TerminalManager | None
 ) -> dict[str, Any]:
     template_id = _required(params, "template")
-    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
-    workspace = state.require_workspace(workspace_id)
-    tab_id = params.get("tab_id")
-    tab = state.require_tab(workspace.id, str(tab_id)) if tab_id else workspace.focused_tab
-    if tab is None:
-        raise ValueError("workspace has no tab for layout template")
+    workspace, tab = _layout_target(state, params, "layout template")
     template = layout_template_record(template_id)
     while len(tab.panes) < int(template["pane_count"]):
         state.create_pane(workspace.id, tab.id, title="pane")
@@ -237,6 +236,59 @@ def _layout_template_apply(
         "pane_count": len(tab.panes),
         "layout": tab.layout,
     }
+
+
+def _layout_custom_export(
+    state: AppState, params: dict[str, Any], _processes: TerminalManager | None
+) -> dict[str, Any]:
+    name = _required(params, "name")
+    workspace, tab = _layout_target(state, params, "custom layout")
+    if not tab.panes:
+        raise ValueError("tab has no panes for custom layout")
+    if tab.layout:
+        layout = TileLayout.from_dict(tab.layout)
+    else:
+        layout = TileLayout.single(tab.panes[0].id)
+    return {
+        "type": "layout_custom_exported",
+        "workspace_id": workspace.id,
+        "tab_id": tab.id,
+        "layout": export_custom_layout(name, layout, label=str(params.get("label") or "")),
+    }
+
+
+def _layout_custom_apply(
+    state: AppState, params: dict[str, Any], _processes: TerminalManager | None
+) -> dict[str, Any]:
+    custom = params.get("layout")
+    if not isinstance(custom, dict):
+        raise ValueError("layout.custom.apply requires a layout object")
+    workspace, tab = _layout_target(state, params, "custom layout")
+    pane_count = max(int(custom.get("pane_count") or 0), 1)
+    while len(tab.panes) < pane_count:
+        state.create_pane(workspace.id, tab.id, title="pane")
+    pane_ids = [pane.id for pane in tab.panes]
+    layout = build_custom_layout(custom, pane_ids)
+    tab.layout = layout.to_dict()
+    tab.focused_pane_id = layout.focus
+    return {
+        "type": "layout_custom_applied",
+        "layout_id": custom.get("id", ""),
+        "workspace_id": workspace.id,
+        "tab_id": tab.id,
+        "pane_count": len(tab.panes),
+        "layout": tab.layout,
+    }
+
+
+def _layout_target(state: AppState, params: dict[str, Any], label: str):
+    workspace_id = str(params.get("workspace_id") or state.focused_workspace_id or "")
+    workspace = state.require_workspace(workspace_id)
+    tab_id = params.get("tab_id")
+    tab = state.require_tab(workspace.id, str(tab_id)) if tab_id else workspace.focused_tab
+    if tab is None:
+        raise ValueError(f"workspace has no tab for {label}")
+    return workspace, tab
 
 
 def _workspace_create(state: AppState, params: dict[str, Any], _processes: TerminalManager | None) -> dict[str, Any]:

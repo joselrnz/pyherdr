@@ -369,6 +369,85 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn('"layout_template_applied"', stdout.getvalue())
 
+    def test_layout_export_command_writes_custom_layout_file(self):
+        import tempfile
+
+        from pyherdr.cli import run_layout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "wide.json"
+            args = build_parser().parse_args(
+                ["layout", "export", "wide", "--output", str(output), "--workspace-id", "ws_1", "--tab-id", "tab_1"]
+            )
+            captured: dict = {}
+
+            def fake_request(request):
+                captured.update(request)
+                return {
+                    "id": "cli",
+                    "result": {
+                        "type": "layout_custom_exported",
+                        "layout": {
+                            "id": "wide",
+                            "label": "wide",
+                            "pane_count": 2,
+                            "layout": {
+                                "root": {"kind": "pane", "pane_id": "pane_1"},
+                                "focus": "pane_1",
+                            },
+                        },
+                    },
+                }
+
+            stdout = StringIO()
+            with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+                exit_code = run_layout(args)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(captured["method"], "layout.custom.export")
+            self.assertEqual(captured["params"], {"name": "wide", "workspace_id": "ws_1", "tab_id": "tab_1"})
+            self.assertTrue(output.exists())
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["id"], "wide")
+            self.assertEqual(json.loads(stdout.getvalue())["path"], str(output))
+
+    def test_layout_import_command_dispatches_custom_layout(self):
+        import tempfile
+
+        from pyherdr.cli import run_layout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "wide.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "id": "wide",
+                        "label": "wide",
+                        "pane_count": 1,
+                        "layout": {"root": {"kind": "pane", "pane_id": "pane_1"}, "focus": "pane_1"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                ["layout", "import", str(source), "--workspace-id", "ws_1", "--tab-id", "tab_1"]
+            )
+            captured: dict = {}
+
+            def fake_request(request):
+                captured.update(request)
+                return {"id": "cli", "result": {"type": "layout_custom_applied", "pane_count": 1}}
+
+            stdout = StringIO()
+            with patch("pyherdr.cli.ensure_request", fake_request), redirect_stdout(stdout):
+                exit_code = run_layout(args)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(captured["method"], "layout.custom.apply")
+            self.assertEqual(captured["params"]["workspace_id"], "ws_1")
+            self.assertEqual(captured["params"]["tab_id"], "tab_1")
+            self.assertEqual(captured["params"]["layout"]["id"], "wide")
+            self.assertIn('"layout_custom_applied"', stdout.getvalue())
+
     def test_profile_commands_parse(self):
         args = build_parser().parse_args(["profile", "plan", "ops", "--workflow", "health"])
 

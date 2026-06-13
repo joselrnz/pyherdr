@@ -3,6 +3,7 @@ import unittest
 from pyherdr.config import (
     Config,
     ConnectionConfig,
+    LayoutConfig,
     ProfileConfig,
     ProfilePaneConfig,
     WorkflowConfig,
@@ -190,6 +191,40 @@ class StartupProfileTests(unittest.TestCase):
                 ("db", Rect(65, 20, 35, 20)),
             ],
         )
+
+    def test_plan_profile_uses_custom_config_layout(self):
+        config = Config(
+            layouts={
+                "wide": LayoutConfig(
+                    pane_count=2,
+                    layout={
+                        "root": {
+                            "kind": "split",
+                            "direction": "horizontal",
+                            "ratio": 0.6,
+                            "first": {"kind": "pane", "pane_id": "pane_1"},
+                            "second": {"kind": "pane", "pane_id": "pane_2"},
+                        },
+                        "focus": "pane_2",
+                    },
+                )
+            },
+            profiles={
+                "ops": ProfileConfig(
+                    layout="wide",
+                    panes=[
+                        ProfilePaneConfig(name="api", command="npm run dev"),
+                        ProfilePaneConfig(name="logs", command="tail -f app.log"),
+                    ],
+                )
+            },
+        )
+
+        plan = plan_profile(config, "ops")
+
+        layout = TileLayout.from_dict(plan["layout_tree"])
+        self.assertEqual(layout.pane_ids(), ["api", "logs"])
+        self.assertEqual(layout.focus, "logs")
 
     def test_build_profile_layout_uses_position_hints_without_template(self):
         profile = ProfileConfig(

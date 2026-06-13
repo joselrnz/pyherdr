@@ -187,6 +187,12 @@ class WorkflowConfig(_Section):
     steps: list[WorkflowStepConfig] = Field(default_factory=list)
 
 
+class LayoutConfig(_Section):
+    label: str = ""
+    pane_count: int = 0
+    layout: dict[str, object] = Field(default_factory=dict)
+
+
 class WorkspaceConfig(_Section):
     search_roots: list[str] = Field(default_factory=list)
     search_ignore: list[str] = Field(default_factory=lambda: list(DEFAULT_WORKSPACE_SEARCH_IGNORE))
@@ -283,5 +289,6 @@ class Config(_Section):
     experimental: ExperimentalConfig = ExperimentalConfig()
     remote: RemoteConfig = RemoteConfig()
     connections: dict[str, ConnectionConfig] = Field(default_factory=dict)
+    layouts: dict[str, LayoutConfig] = Field(default_factory=dict)
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     workflows: dict[str, WorkflowConfig] = Field(default_factory=dict)

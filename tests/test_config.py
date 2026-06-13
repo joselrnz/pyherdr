@@ -167,6 +167,40 @@ send = "uptime"
         self.assertEqual(config.profiles["ops"].panes[1].start_order, 10)
         self.assertEqual(config.workflows["health"].steps[0].pane, "prod-1")
 
+    def test_custom_layouts_load_from_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(
+                """
+[layouts.ops]
+label = "Ops split"
+pane_count = 2
+
+[layouts.ops.layout]
+focus = "pane_2"
+
+[layouts.ops.layout.root]
+kind = "split"
+direction = "horizontal"
+ratio = 0.6
+
+[layouts.ops.layout.root.first]
+kind = "pane"
+pane_id = "pane_1"
+
+[layouts.ops.layout.root.second]
+kind = "pane"
+pane_id = "pane_2"
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.layouts["ops"].label, "Ops split")
+        self.assertEqual(config.layouts["ops"].pane_count, 2)
+        self.assertEqual(config.layouts["ops"].layout["focus"], "pane_2")
+
 
 if __name__ == "__main__":
     unittest.main()

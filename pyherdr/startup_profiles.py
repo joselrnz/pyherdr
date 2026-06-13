@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Config, ConnectionConfig, ConnectionType, ProfileConfig, ProfilePaneConfig, WorkflowConfig
-from .layout import Direction, PaneNode, SplitNode, TileLayout, build_template_layout
+from .layout import Direction, PaneNode, SplitNode, TileLayout, build_custom_layout, build_template_layout
 from .remote import ssh_base_command, ssh_target
 
 
@@ -67,13 +67,17 @@ def _pane_names_for_layout(profile: ProfileConfig) -> list[str]:
     return [pane.name for pane in ordered]
 
 
-def build_profile_layout(profile: ProfileConfig) -> dict[str, Any]:
+def build_profile_layout(profile: ProfileConfig, custom_layouts: dict[str, Any] | None = None) -> dict[str, Any]:
     pane_names = _pane_names_for_layout(profile)
     if not pane_names:
         return {}
     if len(pane_names) == 1:
         return TileLayout.single(pane_names[0]).to_dict()
     if profile.layout:
+        custom_layout = (custom_layouts or {}).get(profile.layout)
+        if custom_layout is not None:
+            record = custom_layout.model_dump(mode="json") if hasattr(custom_layout, "model_dump") else custom_layout
+            return build_custom_layout(record, pane_names).to_dict()
         try:
             return build_template_layout(profile.layout, pane_names).to_dict()
         except ValueError:
@@ -246,7 +250,7 @@ def plan_profile(config: Config, profile_name: str, *, workflow_name: str | None
         "workspace": profile.workspace,
         "cwd": profile.cwd,
         "layout": profile.layout,
-        "layout_tree": build_profile_layout(profile),
+        "layout_tree": build_profile_layout(profile, config.layouts),
         "panes": panes,
         "remote_connections": profile_remote_connections(config, profile),
         "start_sequence": start_sequence,
