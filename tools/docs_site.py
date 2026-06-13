@@ -14,6 +14,7 @@ README = ROOT / "README.md"
 CHANGELOG = ROOT / "CHANGELOG.md"
 DOCS_DIR = ROOT / "docs"
 DECISION = DOCS_DIR / "site-decision.md"
+RELEASE_CHECKLIST = DOCS_DIR / "release-checklist.md"
 
 
 def check_docs_site(root: Path = ROOT) -> list[str]:
@@ -21,6 +22,7 @@ def check_docs_site(root: Path = ROOT) -> list[str]:
     changelog = root / "CHANGELOG.md"
     docs_dir = root / "docs"
     decision = docs_dir / "site-decision.md"
+    release_checklist = docs_dir / "release-checklist.md"
     errors: list[str] = []
 
     if not readme.exists():
@@ -46,6 +48,14 @@ def check_docs_site(root: Path = ROOT) -> list[str]:
             errors.append("docs/site-decision.md must state the docs-site decision")
         if "tools.docs_site --check" not in decision_text:
             errors.append("docs/site-decision.md must document the validation command")
+
+    if not release_checklist.exists():
+        errors.append("docs/release-checklist.md is missing")
+    else:
+        checklist_text = release_checklist.read_text(encoding="utf-8").lower()
+        for required in ("version", "ruff check", "mypy", "unittest", "twine check", "git tag", "publish"):
+            if required not in checklist_text:
+                errors.append(f"docs/release-checklist.md must cover {required!r}")
 
     tracked_docs = sorted(path for path in docs_dir.glob("*.md") if path.name != "site-decision.md")
     if not tracked_docs:

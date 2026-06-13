@@ -57,6 +57,14 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("PORTING_", changelog)
         self.assertNotIn("Mega Plan", changelog)
 
+    def test_release_checklist_covers_dry_run_steps(self):
+        checklist = Path("docs/release-checklist.md").read_text(encoding="utf-8").lower()
+
+        for required in ("version", "ruff check", "mypy", "unittest", "twine check", "git tag", "publish"):
+            self.assertIn(required, checklist)
+        self.assertIn(".github/workflows/release.yml", checklist)
+        self.assertIn("abort conditions", checklist)
+
     def test_workspace_search_config_loads_from_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"
