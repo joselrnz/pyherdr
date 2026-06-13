@@ -15,7 +15,13 @@ from .config import load_config
 from .diagnostics import create_debug_bundle
 from .gui import main as dashboard_main
 from .models import AgentStatus
-from .plugins import load_detector_plugin, load_launcher_plugin, load_plugin_manifest, load_theme_plugin
+from .plugins import (
+    load_detector_plugin,
+    load_exporter_plugin,
+    load_launcher_plugin,
+    load_plugin_manifest,
+    load_theme_plugin,
+)
 from .remote import probe_connection, probe_remote
 from .replay import load_recording, summarize_recording
 from .server import (
@@ -181,6 +187,16 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_validate.add_argument("--test-file", default="", help="sample text file to run through a detector plugin")
     plugin_validate.add_argument("--list-launchers", action="store_true", help="print launchers from a launcher plugin")
     plugin_validate.add_argument("--list-themes", action="store_true", help="print themes from a theme plugin")
+    plugin_validate.add_argument(
+        "--list-exporters",
+        action="store_true",
+        help="print exporters from an exporter plugin",
+    )
+    plugin_export = plugin_sub.add_parser("export", help="export a session recording through an exporter plugin")
+    plugin_export.add_argument("manifest")
+    plugin_export.add_argument("recording")
+    plugin_export.add_argument("--output", "-o", required=True)
+    plugin_export.add_argument("--exporter", default="", help="optional exporter id for multi-exporter plugins")
 
     profile = sub.add_parser("profile", help="startup profile inventory commands")
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
@@ -772,7 +788,20 @@ def run_plugin(args) -> int:
             if manifest.kind != "theme":
                 raise ValueError("--list-themes is only supported for theme plugins")
             payload["themes"] = load_theme_plugin(Path(args.manifest)).themes()
+        if args.list_exporters:
+            if manifest.kind != "exporter":
+                raise ValueError("--list-exporters is only supported for exporter plugins")
+            payload["exporters"] = load_exporter_plugin(Path(args.manifest)).exporters()
         print(json.dumps(payload, indent=2))
+        return 0
+    if args.plugin_command == "export":
+        recording = load_recording(Path(args.recording))
+        result = load_exporter_plugin(Path(args.manifest)).export(
+            recording,
+            Path(args.output),
+            exporter_id=args.exporter,
+        )
+        print(json.dumps(result, indent=2))
         return 0
     return 2
 

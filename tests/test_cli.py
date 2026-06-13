@@ -1098,6 +1098,23 @@ class CliTests(unittest.TestCase):
 
         self.assertTrue(args.list_themes)
 
+    def test_plugin_validate_accepts_exporter_listing(self):
+        args = build_parser().parse_args(["plugin", "validate", "plugin.json", "--list-exporters"])
+
+        self.assertTrue(args.list_exporters)
+
+    def test_plugin_export_parses_manifest_recording_and_output(self):
+        args = build_parser().parse_args(
+            ["plugin", "export", "plugin.json", "recording.json", "--output", "recording.txt", "--exporter", "text"]
+        )
+
+        self.assertEqual(args.command, "plugin")
+        self.assertEqual(args.plugin_command, "export")
+        self.assertEqual(args.manifest, "plugin.json")
+        self.assertEqual(args.recording, "recording.json")
+        self.assertEqual(args.output, "recording.txt")
+        self.assertEqual(args.exporter, "text")
+
     def test_plugin_validate_runs_detector_smoke_test(self):
         import tempfile
 
@@ -1208,6 +1225,102 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["themes"][0]["name"], "ops-dark")
         self.assertEqual(payload["themes"][0]["palette"]["accent"], "#00ffff")
+
+    def test_plugin_validate_lists_exporter_plugin_records(self):
+        import tempfile
+
+        from pyherdr.cli import run_plugin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "exporter.py").write_text(
+                "def exporters():\n"
+                "    return [{'id': 'text', 'label': 'Plain text', 'extension': '.txt'}]\n"
+                "\n"
+                "def export(recording, output, exporter_id=''):\n"
+                "    output.write_text('unused', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "text-exporter",
+                        "version": "1.0.0",
+                        "kind": "exporter",
+                        "entrypoint": "exporter.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(["plugin", "validate", str(manifest), "--list-exporters"])
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_plugin(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["exporters"][0]["id"], "text")
+        self.assertEqual(payload["exporters"][0]["extension"], ".txt")
+
+    def test_plugin_export_writes_recording_through_exporter(self):
+        import tempfile
+
+        from pyherdr.cli import run_plugin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "exporter.py").write_text(
+                "def exporters():\n"
+                "    return [{'id': 'text', 'label': 'Plain text', 'extension': '.txt'}]\n"
+                "\n"
+                "def export(recording, output, exporter_id=''):\n"
+                "    panes = []\n"
+                "    for workspace in recording.get('workspaces', []):\n"
+                "        for tab in workspace.get('tabs', []):\n"
+                "            panes.extend(tab.get('panes', []))\n"
+                "    output.write_text('\\n'.join(pane.get('title', '') for pane in panes), encoding='utf-8')\n"
+                "    return {'exporter': exporter_id or 'text', 'pane_count': len(panes)}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "text-exporter",
+                        "version": "1.0.0",
+                        "kind": "exporter",
+                        "entrypoint": "exporter.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            recording = root / "recording.json"
+            recording.write_text(
+                json.dumps(
+                    {
+                        "type": "session_recording",
+                        "workspaces": [{"tabs": [{"panes": [{"title": "api"}, {"title": "logs"}]}]}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "recording.txt"
+            args = build_parser().parse_args(
+                ["plugin", "export", str(manifest), str(recording), "--output", str(output), "--exporter", "text"]
+            )
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_plugin(args)
+            exported_text = output.read_text(encoding="utf-8")
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["exporter"], "text")
+        self.assertEqual(payload["pane_count"], 2)
+        self.assertEqual(exported_text, "api\nlogs")
 
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):

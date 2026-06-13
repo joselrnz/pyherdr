@@ -4,7 +4,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from pyherdr.models import AgentStatus
-from pyherdr.plugins import load_detector_plugin, load_launcher_plugin, load_plugin_manifest, load_theme_plugin
+from pyherdr.plugins import (
+    load_detector_plugin,
+    load_exporter_plugin,
+    load_launcher_plugin,
+    load_plugin_manifest,
+    load_theme_plugin,
+)
 
 
 class PluginManifestTests(unittest.TestCase):
@@ -141,6 +147,50 @@ class PluginManifestTests(unittest.TestCase):
 
         self.assertEqual(theme["name"], "ops-dark")
         self.assertEqual(theme["palette"]["accent"], "#00ffff")
+
+    def test_exporter_plugin_writes_recording_export(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "exporter.py").write_text(
+                "def exporters():\n"
+                "    return [{'id': 'text', 'label': 'Plain text', 'extension': '.txt'}]\n"
+                "\n"
+                "def export(recording, output, exporter_id=''):\n"
+                "    panes = []\n"
+                "    for workspace in recording.get('workspaces', []):\n"
+                "        for tab in workspace.get('tabs', []):\n"
+                "            panes.extend(tab.get('panes', []))\n"
+                "    output.write_text('\\n'.join(pane.get('title', '') for pane in panes), encoding='utf-8')\n"
+                "    return {'exporter': exporter_id or 'text', 'pane_count': len(panes)}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "text-exporter",
+                        "version": "1.0.0",
+                        "kind": "exporter",
+                        "entrypoint": "exporter.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "recording.txt"
+            plugin = load_exporter_plugin(manifest)
+
+            [exporter] = plugin.exporters()
+            result = plugin.export(
+                {"type": "session_recording", "workspaces": [{"tabs": [{"panes": [{"title": "api"}]}]}]},
+                output,
+                exporter_id="text",
+            )
+            exported_text = output.read_text(encoding="utf-8")
+
+        self.assertEqual(exporter["id"], "text")
+        self.assertEqual(result["pane_count"], 1)
+        self.assertEqual(result["output"], str(output))
+        self.assertEqual(exported_text, "api")
 
     def test_invalid_plugin_manifest_fails_clearly(self):
         with TemporaryDirectory() as temp:

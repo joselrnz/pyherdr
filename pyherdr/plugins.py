@@ -19,6 +19,7 @@ DetectorResult = AgentDetection | AgentStatus | str | dict[str, Any]
 DetectorCallable = Callable[[str], DetectorResult]
 LauncherRecord = dict[str, str]
 ThemeRecord = dict[str, Any]
+ExporterRecord = dict[str, str]
 
 
 class PluginManifest(BaseModel):
@@ -193,6 +194,69 @@ def load_theme_plugin_records(manifest_paths: Iterable[str]) -> list[ThemeRecord
     return records
 
 
+@dataclass(frozen=True)
+class ExporterPlugin:
+    """Loaded recording exporter plugin entrypoint."""
+
+    manifest: PluginManifest
+    manifest_path: Path
+    export_fn: Callable[..., Any]
+    exporters_fn: Callable[[], Any] | None = None
+
+    def exporters(self) -> list[ExporterRecord]:
+        if self.exporters_fn is None:
+            return [
+                {
+                    "id": self.manifest.name,
+                    "label": self.manifest.name,
+                    "description": self.manifest.description,
+                    "extension": "",
+                }
+            ]
+        items = _coerce_exporter_items(self.exporters_fn())
+        return [_coerce_exporter_record(item, self.manifest.name) for item in items]
+
+    def export(self, recording: dict[str, Any], output: Path | str, *, exporter_id: str = "") -> dict[str, Any]:
+        target = Path(output).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = self.export_fn(recording, target, exporter_id=exporter_id)
+        except TypeError:
+            result = self.export_fn(recording, target)
+        return _coerce_export_result(result, target, self.manifest.name)
+
+
+def load_exporter_plugin(path: Path | str) -> ExporterPlugin:
+    """Load one exporter plugin from a manifest path."""
+    manifest_path = Path(path)
+    manifest = load_plugin_manifest(manifest_path)
+    if manifest.kind != "exporter":
+        raise ValueError(f"plugin manifest {manifest_path} is {manifest.kind!r}, not 'exporter'")
+    entrypoint = _resolve_entrypoint(manifest_path, manifest.entrypoint)
+    module = _load_module(entrypoint, manifest.name)
+    export_fn = getattr(module, "export", None)
+    if not callable(export_fn):
+        raise ValueError(f"exporter plugin {manifest.name!r} must expose a callable export(recording, output)")
+    exporters_fn = getattr(module, "exporters", None)
+    return ExporterPlugin(
+        manifest=manifest,
+        manifest_path=manifest_path,
+        export_fn=export_fn,
+        exporters_fn=exporters_fn if callable(exporters_fn) else None,
+    )
+
+
+def load_exporter_plugin_records(manifest_paths: Iterable[str]) -> list[ExporterRecord]:
+    """Load exporter records from configured exporter plugin manifests."""
+    records: list[ExporterRecord] = []
+    for raw_path in manifest_paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
+        records.extend(load_exporter_plugin(Path(path).expanduser()).exporters())
+    return records
+
+
 def _resolve_entrypoint(manifest_path: Path, entrypoint: str) -> Path:
     path = Path(entrypoint).expanduser()
     if not path.is_absolute():
@@ -284,6 +348,45 @@ def _coerce_theme_record(item: Any, plugin_name: str) -> ThemeRecord:
         "description": str(item.get("description") or ""),
         "palette": {str(key): str(value) for key, value in palette.items()},
     }
+
+
+def _coerce_exporter_items(result: Any) -> list[Any]:
+    if isinstance(result, dict):
+        return [result]
+    if isinstance(result, list):
+        return result
+    if isinstance(result, tuple):
+        return list(result)
+    raise ValueError(f"exporter plugin returned unsupported result {type(result).__name__}")
+
+
+def _coerce_exporter_record(item: Any, plugin_name: str) -> ExporterRecord:
+    if not isinstance(item, dict):
+        raise ValueError(f"exporter plugin {plugin_name!r} returned non-object exporter {type(item).__name__}")
+    raw_id = str(item.get("id") or item.get("name") or item.get("label") or "").strip()
+    if not raw_id:
+        raise ValueError(f"exporter plugin {plugin_name!r} returned an exporter without id")
+    label = str(item.get("label") or item.get("name") or raw_id).strip()
+    return {
+        "id": raw_id,
+        "label": label,
+        "description": str(item.get("description") or ""),
+        "extension": str(item.get("extension") or ""),
+    }
+
+
+def _coerce_export_result(result: Any, output: Path, plugin_name: str) -> dict[str, Any]:
+    if result is None:
+        return {"type": "plugin_export", "plugin": plugin_name, "output": str(output)}
+    if isinstance(result, dict):
+        payload = dict(result)
+        payload.setdefault("type", "plugin_export")
+        payload.setdefault("plugin", plugin_name)
+        payload.setdefault("output", str(output))
+        return payload
+    if isinstance(result, (str, Path)):
+        return {"type": "plugin_export", "plugin": plugin_name, "output": str(result)}
+    raise ValueError(f"exporter plugin {plugin_name!r} returned unsupported result {type(result).__name__}")
 
 
 def _normalize_label(label: str) -> str:
