@@ -25,6 +25,21 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("Typing :: Typed", project["classifiers"])
         self.assertTrue(Path("pyherdr/py.typed").exists())
 
+    def test_readme_comparison_is_present_and_balanced(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+
+        self.assertIn("## How PyHerdr Compares", readme)
+        self.assertIn("| [tmux]", readme)
+        self.assertIn("| [Zellij]", readme)
+        self.assertIn("| [cmux-class agent terminals]", readme)
+        self.assertIn("Current caveat", readme)
+        self.assertIn("tmux is far more mature", readme)
+        self.assertIn("Zellij has a broader established", readme)
+        self.assertIn("Native/GPU terminal apps can have stronger renderer fidelity", readme)
+        self.assertNotIn("better than tmux", readme.lower())
+        self.assertNotIn("better than zellij", readme.lower())
+        self.assertNotIn("faster than tmux", readme.lower())
+
     def test_workspace_search_config_loads_from_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"

@@ -48,6 +48,23 @@ reattach without losing a session.
   a full CLI/API mirrors the UI. Plus cron-scheduled pane commands and git
   worktree helpers.
 
+## How PyHerdr Compares
+
+PyHerdr is not trying to be a drop-in replacement for every terminal
+multiplexer. It is a Python-first, terminal-native control plane for running
+many shells and coding agents from one place.
+
+| Tool class | Strong fit | PyHerdr difference | Current caveat |
+|---|---|---|---|
+| [tmux](https://github.com/tmux/tmux/wiki) | Durable terminal multiplexing, scripting, detach/reattach, SSH-heavy workflows | Keeps the terminal-native and scriptable shape, then adds agent status, workflow graphing, JSON API/CLI, resource views, and Python plugins | tmux is far more mature and widely deployed; PyHerdr is still building full parity for advanced pane/window operations |
+| [Zellij](https://zellij.dev/faq/) | Batteries-included terminal workspace with panes, tabs, layouts, sessions, and plugins | Focuses specifically on AI-agent operations: launchers, detector plugins, fan-out previews, session recording/replay, and workflow audit views | Zellij has a broader established workspace/plugin ecosystem; PyHerdr's plugin and docs surfaces are still early |
+| [cmux-class agent terminals](https://github.com/manaflow-ai/cmux) | Polished native terminal UX for running coding agents in parallel | Stays terminal-native and cross-platform through Python/Textual, with CLI-first automation, SSH/profile planning, and a long-running token-authenticated server | Native/GPU terminal apps can have stronger renderer fidelity today; PyHerdr trades that for scriptability, portability, and headless use |
+
+The short version: use tmux or Zellij when you mainly need a battle-tested
+general-purpose multiplexer. Use PyHerdr when the job is coordinating many
+agent or SSH panes and you want the terminal, API, workflow log, and plugin
+surface to understand that workflow.
+
 ## Glossary
 
 - **Fan-out:** send one command or text input to several panes at once. PyHerdr
