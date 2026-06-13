@@ -6,7 +6,7 @@ PyHerdr's public docs surface is currently:
 
 - `README.md` for install, quickstart, core usage, comparison, and config.
 - `docs/*.md` for focused policy and architecture notes.
-- `CHANGELOG.md` once public release notes land.
+- `CHANGELOG.md` for public release notes.
 
 This avoids adding MkDocs, Sphinx, Docusaurus, or another docs dependency before
 the README, changelog, and release checklist stabilize. The repo should add a
@@ -19,6 +19,7 @@ Validation command:
 .\.venv\Scripts\python.exe -m tools.docs_site --check
 ```
 
-The check verifies that the README and tracked docs pages exist, that the README
-still includes the quickstart and comparison sections, and that the project does
-not advertise a generated docs-site command without updating this decision.
+The check verifies that the README, changelog, and tracked docs pages exist,
+that the README still includes the quickstart and comparison sections, and that
+the project does not advertise a generated docs-site command without updating
+this decision.

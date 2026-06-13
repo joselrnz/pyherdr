@@ -11,12 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
+CHANGELOG = ROOT / "CHANGELOG.md"
 DOCS_DIR = ROOT / "docs"
 DECISION = DOCS_DIR / "site-decision.md"
 
 
 def check_docs_site(root: Path = ROOT) -> list[str]:
     readme = root / "README.md"
+    changelog = root / "CHANGELOG.md"
     docs_dir = root / "docs"
     decision = docs_dir / "site-decision.md"
     errors: list[str] = []
@@ -28,6 +30,13 @@ def check_docs_site(root: Path = ROOT) -> list[str]:
         for heading in ("## 🚀 Quick start", "## How PyHerdr Compares", "## 🧰 CLI"):
             if heading not in readme_text:
                 errors.append(f"README.md is missing {heading!r}")
+
+    if not changelog.exists():
+        errors.append("CHANGELOG.md is missing")
+    else:
+        changelog_text = changelog.read_text(encoding="utf-8")
+        if "# Changelog" not in changelog_text or "## Unreleased" not in changelog_text:
+            errors.append("CHANGELOG.md must include a public changelog structure")
 
     if not decision.exists():
         errors.append("docs/site-decision.md is missing")

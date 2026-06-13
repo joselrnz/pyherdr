@@ -44,6 +44,19 @@ class ConfigTests(unittest.TestCase):
     def test_docs_site_decision_check_passes(self):
         self.assertEqual(check_docs_site(), [])
 
+    def test_changelog_exists_and_is_user_facing(self):
+        changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+
+        self.assertIn("# Changelog", changelog)
+        self.assertIn("## Unreleased", changelog)
+        self.assertIn("## 0.0.4 - 2026-06-13", changelog)
+        self.assertIn("### Added", changelog)
+        self.assertIn("### Changed", changelog)
+        self.assertIn("### Security", changelog)
+        self.assertNotIn("WS-", changelog)
+        self.assertNotIn("PORTING_", changelog)
+        self.assertNotIn("Mega Plan", changelog)
+
     def test_workspace_search_config_loads_from_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"
