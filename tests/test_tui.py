@@ -4,7 +4,15 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pyherdr.config import Config, ProfileConfig, ProfilePaneConfig, UiConfig, WorkflowConfig
+from pyherdr.config import (
+    Config,
+    ConnectionConfig,
+    ConnectionType,
+    ProfileConfig,
+    ProfilePaneConfig,
+    UiConfig,
+    WorkflowConfig,
+)
 from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
@@ -1759,6 +1767,35 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.tabs, 1)
         self.assertIn(("new-pane", "pyherdr profile probe ops"), client.started)
+
+    async def test_profile_picker_shows_inline_connection_status(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        app._config = Config(
+            connections={
+                "prod": ConnectionConfig(host="prod.example.com", user="ops"),
+                "local-tools": ConnectionConfig(type=ConnectionType.LOCAL),
+            },
+            profiles={
+                "ops": ProfileConfig(
+                    panes=[
+                        ProfilePaneConfig(name="api", connection="prod"),
+                        ProfilePaneConfig(name="shell", connection="local-tools"),
+                        ProfilePaneConfig(name="ghost", connection="missing"),
+                    ]
+                )
+            },
+        )
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._run_named_action("profiles")
+            await pilot.pause()
+
+            text = self._screen_text(app.screen, "#profile-list")
+
+        self.assertIn("3 panes", text)
+        self.assertIn("1 ssh prod", text)
+        self.assertIn("1 local local-tools", text)
+        self.assertIn("missing missing", text)
 
     async def test_prefix_then_a_cycles_attention_panes(self):
         client = FakeClient()

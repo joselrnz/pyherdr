@@ -1415,11 +1415,13 @@ class ProfilePickerScreen(ModalScreen[None]):
         profiles: dict[str, Any],
         workflows: dict[str, Any],
         on_pick: Callable[[str, str, str], None],
+        connections: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self._profiles = profiles
         self._workflows = workflows
         self._on_pick = on_pick
+        self._connections = connections or {}
         self._actions: list[tuple[str, str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -1438,15 +1440,23 @@ class ProfilePickerScreen(ModalScreen[None]):
             workflows = sorted(
                 name for name, workflow in self._workflows.items() if getattr(workflow, "profile", "") == profile_name
             )
-            rows.append(self._action_row(profile_name, "start", "", workflows))
+            status = self._profile_status(profile_name)
+            rows.append(self._action_row(profile_name, "start", "", workflows, status))
             for workflow_name in workflows:
-                rows.append(self._action_row(profile_name, "start", workflow_name, workflows))
-            rows.append(self._action_row(profile_name, "attach", "", workflows))
-            rows.append(self._action_row(profile_name, "stop", "", workflows))
-            rows.append(self._action_row(profile_name, "probe", "", workflows))
+                rows.append(self._action_row(profile_name, "start", workflow_name, workflows, status))
+            rows.append(self._action_row(profile_name, "attach", "", workflows, ""))
+            rows.append(self._action_row(profile_name, "stop", "", workflows, ""))
+            rows.append(self._action_row(profile_name, "probe", "", workflows, status))
         await listing.mount(*rows)
 
-    def _action_row(self, profile_name: str, action: str, workflow_name: str, workflows: list[str]) -> Clickable:
+    def _action_row(
+        self,
+        profile_name: str,
+        action: str,
+        workflow_name: str,
+        workflows: list[str],
+        status: str,
+    ) -> Clickable:
         index = len(self._actions)
         self._actions.append((action, profile_name, workflow_name))
         label = Text()
@@ -1460,11 +1470,52 @@ class ProfilePickerScreen(ModalScreen[None]):
         label.append(f" {profile_name}", style="bold")
         if workflow_name:
             label.append(f"  --workflow {workflow_name}", style="#a6e3a1")
+            if status:
+                label.append(f" · {status}", style="#6c7086")
         elif action == "probe":
-            label.append("  test SSH connections", style="#6c7086")
+            label.append(f"  {status or 'test SSH connections'}", style="#6c7086")
         else:
             label.append(f"  {len(workflows)} workflow{'s' if len(workflows) != 1 else ''}", style="#6c7086")
+            if status:
+                label.append(f" · {status}", style="#6c7086")
         return Clickable(label, "profile_pick", str(index), id=f"profile-{index}", classes="profile-row")
+
+    def _profile_status(self, profile_name: str) -> str:
+        profile = self._profiles.get(profile_name)
+        panes = list(getattr(profile, "panes", []) or [])
+        referenced: list[str] = []
+        for pane in panes:
+            connection_name = str(getattr(pane, "connection", "") or "")
+            if connection_name and connection_name not in referenced:
+                referenced.append(connection_name)
+        ssh: list[str] = []
+        local: list[str] = []
+        missing: list[str] = []
+        for connection_name in referenced:
+            connection = self._connections.get(connection_name)
+            if connection is None:
+                missing.append(connection_name)
+            elif str(getattr(connection, "type", "")) == "local":
+                local.append(connection_name)
+            else:
+                ssh.append(connection_name)
+        pane_word = "pane" if len(panes) == 1 else "panes"
+        parts = [f"{len(panes)} {pane_word}"]
+        if ssh:
+            parts.append(f"{len(ssh)} ssh {self._compact_names(ssh)}")
+        elif not referenced:
+            parts.append("local")
+        if local:
+            parts.append(f"{len(local)} local {self._compact_names(local)}")
+        if missing:
+            parts.append(f"missing {self._compact_names(missing)}")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _compact_names(names: list[str]) -> str:
+        visible = names[:3]
+        suffix = f" +{len(names) - len(visible)}" if len(names) > len(visible) else ""
+        return ", ".join(visible) + suffix
 
     def on_activated(self, message: Activated) -> None:
         message.stop()
@@ -3520,7 +3571,12 @@ class PyHerdrTui(App):
 
     def _open_profiles(self) -> None:
         self.push_screen(
-            ProfilePickerScreen(self._config.profiles, self._config.workflows, self._profile_picker_submit)
+            ProfilePickerScreen(
+                self._config.profiles,
+                self._config.workflows,
+                self._profile_picker_submit,
+                self._config.connections,
+            )
         )
 
     def _profile_picker_submit(self, action: str, profile_name: str, workflow_name: str) -> None:
