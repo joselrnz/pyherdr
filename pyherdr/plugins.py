@@ -17,6 +17,7 @@ from .domain.status import AgentStatus
 PluginKind = Literal["detector", "launcher", "theme", "exporter"]
 DetectorResult = AgentDetection | AgentStatus | str | dict[str, Any]
 DetectorCallable = Callable[[str], DetectorResult]
+LauncherRecord = dict[str, str]
 
 
 class PluginManifest(BaseModel):
@@ -115,6 +116,44 @@ def detect_plugin_agent(label: str, content: str, manifest_paths: Iterable[str])
     return load_detector_plugin_registry(paths).detect(label, content)
 
 
+@dataclass(frozen=True)
+class LauncherPlugin:
+    """Loaded launcher plugin entrypoint."""
+
+    manifest: PluginManifest
+    manifest_path: Path
+    launchers_fn: Callable[[], Any]
+
+    def launchers(self) -> list[LauncherRecord]:
+        items = _coerce_launcher_items(self.launchers_fn())
+        return [_coerce_launcher_record(item, self.manifest.name) for item in items]
+
+
+def load_launcher_plugin(path: Path | str) -> LauncherPlugin:
+    """Load one launcher plugin from a manifest path."""
+    manifest_path = Path(path)
+    manifest = load_plugin_manifest(manifest_path)
+    if manifest.kind != "launcher":
+        raise ValueError(f"plugin manifest {manifest_path} is {manifest.kind!r}, not 'launcher'")
+    entrypoint = _resolve_entrypoint(manifest_path, manifest.entrypoint)
+    module = _load_module(entrypoint, manifest.name)
+    launchers_fn = getattr(module, "launchers", None)
+    if not callable(launchers_fn):
+        raise ValueError(f"launcher plugin {manifest.name!r} must expose a callable launchers() function")
+    return LauncherPlugin(manifest=manifest, manifest_path=manifest_path, launchers_fn=launchers_fn)
+
+
+def load_launcher_plugin_records(manifest_paths: Iterable[str]) -> list[LauncherRecord]:
+    """Load launcher records from configured launcher plugin manifests."""
+    records: list[LauncherRecord] = []
+    for raw_path in manifest_paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
+        records.extend(load_launcher_plugin(Path(path).expanduser()).launchers())
+    return records
+
+
 def _resolve_entrypoint(manifest_path: Path, entrypoint: str) -> Path:
     path = Path(entrypoint).expanduser()
     if not path.is_absolute():
@@ -151,6 +190,33 @@ def _coerce_detection(result: DetectorResult, plugin_name: str) -> AgentDetectio
             visible_working=bool(result.get("visible_working", False)),
         )
     raise ValueError(f"detector plugin {plugin_name!r} returned unsupported result {type(result).__name__}")
+
+
+def _coerce_launcher_items(result: Any) -> list[Any]:
+    if isinstance(result, dict):
+        return [result]
+    if isinstance(result, list):
+        return result
+    if isinstance(result, tuple):
+        return list(result)
+    raise ValueError(f"launcher plugin returned unsupported result {type(result).__name__}")
+
+
+def _coerce_launcher_record(item: Any, plugin_name: str) -> LauncherRecord:
+    if not isinstance(item, dict):
+        raise ValueError(f"launcher plugin {plugin_name!r} returned non-object launcher {type(item).__name__}")
+    command = str(item.get("command") or "").strip()
+    if not command:
+        raise ValueError(f"launcher plugin {plugin_name!r} returned a launcher without command")
+    raw_id = str(item.get("id") or item.get("label") or command).strip()
+    label = str(item.get("label") or raw_id or command).strip()
+    return {
+        "id": raw_id,
+        "label": label,
+        "command": command,
+        "description": str(item.get("description") or ""),
+        "agent": str(item.get("agent") or ""),
+    }
 
 
 def _normalize_label(label: str) -> str:

@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from pyherdr.models import AgentStatus
-from pyherdr.plugins import load_detector_plugin, load_plugin_manifest
+from pyherdr.plugins import load_detector_plugin, load_launcher_plugin, load_plugin_manifest
 
 
 class PluginManifestTests(unittest.TestCase):
@@ -68,6 +68,42 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(blocked.state, AgentStatus.BLOCKED)
         self.assertTrue(blocked.visible_blocker)
         self.assertEqual(working.state, AgentStatus.WORKING)
+
+    def test_launcher_plugin_loads_launchers(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "launcher.py").write_text(
+                "def launchers():\n"
+                "    return [\n"
+                "        {\n"
+                "            'id': 'ops-shell',\n"
+                "            'label': 'Ops Shell',\n"
+                "            'command': 'ssh ops@example.com',\n"
+                "            'description': 'Open ops host',\n"
+                "            'agent': 'shell',\n"
+                "        }\n"
+                "    ]\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "ops-launchers",
+                        "version": "1.0.0",
+                        "kind": "launcher",
+                        "entrypoint": "launcher.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            plugin = load_launcher_plugin(manifest)
+            [launcher] = plugin.launchers()
+
+        self.assertEqual(launcher["id"], "ops-shell")
+        self.assertEqual(launcher["label"], "Ops Shell")
+        self.assertEqual(launcher["command"], "ssh ops@example.com")
 
     def test_invalid_plugin_manifest_fails_clearly(self):
         with TemporaryDirectory() as temp:

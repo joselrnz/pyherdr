@@ -266,6 +266,7 @@ class PluginsConfig(_Section):
     """Configured plugin manifest paths."""
 
     detectors: list[str] = Field(default_factory=list)
+    launchers: list[str] = Field(default_factory=list)
 
 
 class KeysConfig(_Section):

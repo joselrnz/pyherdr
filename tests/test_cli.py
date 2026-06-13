@@ -1088,6 +1088,11 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(args.test_input, "APPROVE")
 
+    def test_plugin_validate_accepts_launcher_listing(self):
+        args = build_parser().parse_args(["plugin", "validate", "plugin.json", "--list-launchers"])
+
+        self.assertTrue(args.list_launchers)
+
     def test_plugin_validate_runs_detector_smoke_test(self):
         import tempfile
 
@@ -1122,6 +1127,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["detector_test"]["state"], "blocked")
         self.assertTrue(payload["detector_test"]["visible_blocker"])
+
+    def test_plugin_validate_lists_launcher_plugin_records(self):
+        import tempfile
+
+        from pyherdr.cli import run_plugin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "launcher.py").write_text(
+                "def launchers():\n"
+                "    return [{'id': 'ops-shell', 'label': 'Ops Shell', 'command': 'ssh ops@example.com'}]\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "ops-launchers",
+                        "version": "1.0.0",
+                        "kind": "launcher",
+                        "entrypoint": "launcher.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(["plugin", "validate", str(manifest), "--list-launchers"])
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_plugin(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["launchers"][0]["id"], "ops-shell")
+        self.assertEqual(payload["launchers"][0]["command"], "ssh ops@example.com")
 
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):

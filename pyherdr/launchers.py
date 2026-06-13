@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .config.settings import Config
+from .plugins import load_launcher_plugin_records
 
 
 @dataclass(frozen=True)
@@ -52,4 +53,31 @@ def launcher_presets(config: Config, *, default_shell: str) -> list[LauncherPres
                 False,
             )
         )
+    for index, record in enumerate(_plugin_launcher_records(config), start=1):
+        preset_id = _preset_id(record.get("id") or record.get("label") or f"plugin-{index}")
+        if preset_id in seen:
+            preset_id = f"{preset_id}-plugin-{index}"
+        seen.add(preset_id)
+        presets.append(
+            LauncherPreset(
+                preset_id,
+                record.get("label") or record["command"],
+                record["command"],
+                record.get("description", ""),
+                record.get("agent", ""),
+                False,
+            )
+        )
     return presets
+
+
+def _plugin_launcher_records(config: Config) -> list[dict[str, str]]:
+    """Return launcher plugin records, skipping invalid plugins until diagnostics exist."""
+    try:
+        return load_launcher_plugin_records(config.plugins.launchers)
+    except ValueError:
+        return []
+
+
+def _preset_id(value: str) -> str:
+    return value.strip().lower().replace(" ", "-")

@@ -8,6 +8,7 @@ from pyherdr.config import (
     Config,
     ConnectionConfig,
     ConnectionType,
+    PluginsConfig,
     ProfileConfig,
     ProfilePaneConfig,
     UiConfig,
@@ -2623,6 +2624,29 @@ search_roots = ["{configured.as_posix()}"]
 
         self.assertEqual(client.tabs, 1)
         self.assertIn(("new-pane", "codex"), client.started)
+
+    async def test_tui_loads_launcher_plugin_presets(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "launcher.py").write_text(
+                "def launchers():\n"
+                "    return [{'id': 'ops-shell', 'label': 'Ops Shell', 'command': 'ssh ops@example.com'}]\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                '{"name":"ops-launchers","version":"1.0.0","kind":"launcher","entrypoint":"launcher.py"}',
+                encoding="utf-8",
+            )
+            config = Config(plugins=PluginsConfig(launchers=[str(manifest)]))
+
+            with patch("pyherdr.presentation.tui.load_config", return_value=config):
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+
+        self.assertTrue(any(preset.id == "ops-shell" for preset in app._launcher_presets))
 
     async def test_command_palette_includes_launcher_presets(self):
         client = FakeClient()
