@@ -267,6 +267,7 @@ class PluginsConfig(_Section):
 
     detectors: list[str] = Field(default_factory=list)
     launchers: list[str] = Field(default_factory=list)
+    themes: list[str] = Field(default_factory=list)
 
 
 class KeysConfig(_Section):

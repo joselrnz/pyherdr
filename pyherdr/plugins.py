@@ -18,6 +18,7 @@ PluginKind = Literal["detector", "launcher", "theme", "exporter"]
 DetectorResult = AgentDetection | AgentStatus | str | dict[str, Any]
 DetectorCallable = Callable[[str], DetectorResult]
 LauncherRecord = dict[str, str]
+ThemeRecord = dict[str, Any]
 
 
 class PluginManifest(BaseModel):
@@ -154,6 +155,44 @@ def load_launcher_plugin_records(manifest_paths: Iterable[str]) -> list[Launcher
     return records
 
 
+@dataclass(frozen=True)
+class ThemePlugin:
+    """Loaded theme plugin entrypoint."""
+
+    manifest: PluginManifest
+    manifest_path: Path
+    themes_fn: Callable[[], Any]
+
+    def themes(self) -> list[ThemeRecord]:
+        items = _coerce_theme_items(self.themes_fn())
+        return [_coerce_theme_record(item, self.manifest.name) for item in items]
+
+
+def load_theme_plugin(path: Path | str) -> ThemePlugin:
+    """Load one theme plugin from a manifest path."""
+    manifest_path = Path(path)
+    manifest = load_plugin_manifest(manifest_path)
+    if manifest.kind != "theme":
+        raise ValueError(f"plugin manifest {manifest_path} is {manifest.kind!r}, not 'theme'")
+    entrypoint = _resolve_entrypoint(manifest_path, manifest.entrypoint)
+    module = _load_module(entrypoint, manifest.name)
+    themes_fn = getattr(module, "themes", None)
+    if not callable(themes_fn):
+        raise ValueError(f"theme plugin {manifest.name!r} must expose a callable themes() function")
+    return ThemePlugin(manifest=manifest, manifest_path=manifest_path, themes_fn=themes_fn)
+
+
+def load_theme_plugin_records(manifest_paths: Iterable[str]) -> list[ThemeRecord]:
+    """Load theme records from configured theme plugin manifests."""
+    records: list[ThemeRecord] = []
+    for raw_path in manifest_paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
+        records.extend(load_theme_plugin(Path(path).expanduser()).themes())
+    return records
+
+
 def _resolve_entrypoint(manifest_path: Path, entrypoint: str) -> Path:
     path = Path(entrypoint).expanduser()
     if not path.is_absolute():
@@ -216,6 +255,34 @@ def _coerce_launcher_record(item: Any, plugin_name: str) -> LauncherRecord:
         "command": command,
         "description": str(item.get("description") or ""),
         "agent": str(item.get("agent") or ""),
+    }
+
+
+def _coerce_theme_items(result: Any) -> list[Any]:
+    if isinstance(result, dict):
+        if all(isinstance(value, dict) for value in result.values()):
+            return [{"name": name, "palette": palette} for name, palette in result.items()]
+        return [result]
+    if isinstance(result, list):
+        return result
+    if isinstance(result, tuple):
+        return list(result)
+    raise ValueError(f"theme plugin returned unsupported result {type(result).__name__}")
+
+
+def _coerce_theme_record(item: Any, plugin_name: str) -> ThemeRecord:
+    if not isinstance(item, dict):
+        raise ValueError(f"theme plugin {plugin_name!r} returned non-object theme {type(item).__name__}")
+    name = str(item.get("name") or item.get("id") or "").strip().lower()
+    if not name:
+        raise ValueError(f"theme plugin {plugin_name!r} returned a theme without name")
+    palette = item.get("palette") or item.get("colors")
+    if not isinstance(palette, dict):
+        palette = {key: value for key, value in item.items() if key not in {"name", "id", "description"}}
+    return {
+        "name": name,
+        "description": str(item.get("description") or ""),
+        "palette": {str(key): str(value) for key, value in palette.items()},
     }
 
 

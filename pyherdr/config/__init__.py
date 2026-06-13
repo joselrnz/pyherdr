@@ -31,7 +31,16 @@ from .settings import (
     WorktreesConfig,
 )
 from .sound import AgentSoundOverrides, AgentSoundSetting, SoundConfig
-from .theme import BUILTIN_THEMES, DEFAULT_THEME, CustomThemeColors, Palette, ThemeConfig, parse_color
+from .theme import (
+    BUILTIN_THEMES,
+    DEFAULT_THEME,
+    CustomThemeColors,
+    Palette,
+    ThemeConfig,
+    parse_color,
+    theme_names,
+    theme_registry,
+)
 
 __all__ = [
     "BUILTIN_THEMES",
@@ -72,4 +81,6 @@ __all__ = [
     "config_path",
     "load_config",
     "parse_color",
+    "theme_names",
+    "theme_registry",
 ]

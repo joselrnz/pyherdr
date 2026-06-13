@@ -15,7 +15,7 @@ from .config import load_config
 from .diagnostics import create_debug_bundle
 from .gui import main as dashboard_main
 from .models import AgentStatus
-from .plugins import load_detector_plugin, load_launcher_plugin, load_plugin_manifest
+from .plugins import load_detector_plugin, load_launcher_plugin, load_plugin_manifest, load_theme_plugin
 from .remote import probe_connection, probe_remote
 from .replay import load_recording, summarize_recording
 from .server import (
@@ -180,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_validate.add_argument("--test-input", default="", help="sample text to run through a detector plugin")
     plugin_validate.add_argument("--test-file", default="", help="sample text file to run through a detector plugin")
     plugin_validate.add_argument("--list-launchers", action="store_true", help="print launchers from a launcher plugin")
+    plugin_validate.add_argument("--list-themes", action="store_true", help="print themes from a theme plugin")
 
     profile = sub.add_parser("profile", help="startup profile inventory commands")
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
@@ -767,6 +768,10 @@ def run_plugin(args) -> int:
             if manifest.kind != "launcher":
                 raise ValueError("--list-launchers is only supported for launcher plugins")
             payload["launchers"] = load_launcher_plugin(Path(args.manifest)).launchers()
+        if args.list_themes:
+            if manifest.kind != "theme":
+                raise ValueError("--list-themes is only supported for theme plugins")
+            payload["themes"] = load_theme_plugin(Path(args.manifest)).themes()
         print(json.dumps(payload, indent=2))
         return 0
     return 2

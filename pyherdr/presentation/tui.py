@@ -42,7 +42,7 @@ from textual.widgets import Input, Static
 
 from ..clipboard import ClipboardBackend, ClipboardResult, LocalClipboardBackend, TextualClipboardBackend, copy_text
 from ..config import AgentPanelScope, load_config
-from ..config.theme import BUILTIN_THEMES, DEFAULT_THEME, THEME_NAMES, Palette
+from ..config.theme import DEFAULT_THEME, Palette, theme_names, theme_registry
 from ..launchers import LauncherPreset, launcher_presets
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
 from ..url_actions import extract_urls
@@ -855,10 +855,11 @@ class ThemeScreen(ModalScreen[None]):
     #theme-foot { color: $ph-subtext0; padding: 1 0 0 0; }
     """
 
-    def __init__(self, names: list[str], current: str) -> None:
+    def __init__(self, names: list[str], current: str, themes: dict[str, Palette]) -> None:
         super().__init__()
         self._names = names
         self._current = (current or "").strip().lower()
+        self._themes = themes
 
     def compose(self) -> ComposeResult:
         with Vertical(id="theme-box"):
@@ -888,7 +889,7 @@ class ThemeScreen(ModalScreen[None]):
     def _row_text(self, name: str) -> Text:
         text = Text()
         text.append("✓ " if name == self._current else "  ", style="#a6e3a1")
-        palette = BUILTIN_THEMES.get(name)
+        palette = self._themes.get(name)
         if palette is not None:
             for token in (palette.accent, palette.green, palette.yellow, palette.red, palette.blue):
                 if token.startswith("#"):
@@ -2994,7 +2995,9 @@ class PyHerdrTui(App):
         # calls get_css_variables(), which reads self._palette.
         config = load_config()
         self._config = config
-        self._palette: Palette = config.theme.resolve()
+        self._themes = theme_registry(config.plugins.themes)
+        self._theme_names = theme_names(config.plugins.themes)
+        self._palette: Palette = config.theme.resolve(self._themes)
         self._theme_name = (config.theme.name or DEFAULT_THEME).strip()
         # Keybindings: custom prefix, action→key overrides, and user commands.
         self._prefix_key = (config.keys.prefix or "ctrl+b").strip()
@@ -3324,7 +3327,7 @@ class PyHerdrTui(App):
             self._client.move_workspace(self._workspace_id, "up" if action == "move_workspace_up" else "down")
             self.run_worker(self.reload(), exclusive=True)
         elif action == "settings":
-            self.push_screen(ThemeScreen(THEME_NAMES, self._theme_name))
+            self.push_screen(ThemeScreen(self._theme_names, self._theme_name, self._themes))
         elif action == "toggle_sidebar":
             self._sidebar_compact = not self._sidebar_compact
             self.run_worker(self._refresh_sidebar(), exclusive=True)
@@ -3943,7 +3946,7 @@ class PyHerdrTui(App):
 
     def apply_theme(self, name: str) -> None:
         """Switch the live theme (re-resolves the $ph-* CSS variables)."""
-        palette = BUILTIN_THEMES.get(name.strip().lower())
+        palette = self._themes.get(name.strip().lower())
         if palette is None:
             return
         self._palette = palette

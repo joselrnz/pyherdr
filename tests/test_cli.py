@@ -1093,6 +1093,11 @@ class CliTests(unittest.TestCase):
 
         self.assertTrue(args.list_launchers)
 
+    def test_plugin_validate_accepts_theme_listing(self):
+        args = build_parser().parse_args(["plugin", "validate", "plugin.json", "--list-themes"])
+
+        self.assertTrue(args.list_themes)
+
     def test_plugin_validate_runs_detector_smoke_test(self):
         import tempfile
 
@@ -1162,6 +1167,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["launchers"][0]["id"], "ops-shell")
         self.assertEqual(payload["launchers"][0]["command"], "ssh ops@example.com")
+
+    def test_plugin_validate_lists_theme_plugin_records(self):
+        import tempfile
+
+        from pyherdr.cli import run_plugin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "theme.py").write_text(
+                "def themes():\n"
+                "    return {'ops-dark': {\n"
+                "        'accent': '#00ffff', 'panel_bg': '#101820', 'surface0': '#17232d',\n"
+                "        'surface1': '#20313d', 'surface_dim': '#0b1117', 'overlay0': '#5d7788',\n"
+                "        'overlay1': '#7894a7', 'text': '#e8f7ff', 'subtext0': '#a8c4d4',\n"
+                "        'mauve': '#c4a7ff', 'green': '#70e08d', 'yellow': '#ffd166',\n"
+                "        'red': '#ff6b8a', 'blue': '#5abfff', 'teal': '#2dd4bf', 'peach': '#ffb86b',\n"
+                "    }}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "name": "ops-themes",
+                        "version": "1.0.0",
+                        "kind": "theme",
+                        "entrypoint": "theme.py",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(["plugin", "validate", str(manifest), "--list-themes"])
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_plugin(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["themes"][0]["name"], "ops-dark")
+        self.assertEqual(payload["themes"][0]["palette"]["accent"], "#00ffff")
 
     def test_demo_screenshot_rejects_unknown_view_before_rendering(self):
         with self.assertRaises(ValueError):

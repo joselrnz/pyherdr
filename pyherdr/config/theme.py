@@ -6,7 +6,11 @@ Ocean Blue is PyHerdr's default. Built-in themes provide canonical palettes;
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic import BaseModel, ConfigDict
+
+from ..plugins import load_theme_plugin_records
 
 
 def parse_color(value: str) -> str:
@@ -311,9 +315,10 @@ class ThemeConfig(BaseModel):
     name: str | None = None
     custom: CustomThemeColors | None = None
 
-    def resolve(self) -> Palette:
+    def resolve(self, themes: Mapping[str, Palette] | None = None) -> Palette:
         """Resolve to a concrete `Palette` (base theme + overrides)."""
-        base = BUILTIN_THEMES.get((self.name or DEFAULT_THEME).strip().lower(), OCEAN_BLUE)
+        registry = themes or BUILTIN_THEMES
+        base = registry.get((self.name or DEFAULT_THEME).strip().lower(), OCEAN_BLUE)
         if self.custom is None:
             return base
         overrides = {
@@ -322,3 +327,33 @@ class ThemeConfig(BaseModel):
             if value is not None
         }
         return base.model_copy(update=overrides)
+
+
+def theme_registry(plugin_paths: list[str] | tuple[str, ...] = ()) -> dict[str, Palette]:
+    """Return built-in themes merged with configured theme plugin palettes."""
+    themes = dict(BUILTIN_THEMES)
+    for record in load_theme_plugin_records(plugin_paths):
+        try:
+            palette = _palette_from_record(record)
+        except ValueError:
+            continue
+        themes[record["name"]] = palette
+    return themes
+
+
+def theme_names(plugin_paths: list[str] | tuple[str, ...] = ()) -> list[str]:
+    """Return display theme names with built-ins first and plugin themes appended."""
+    registry = theme_registry(plugin_paths)
+    names = list(THEME_NAMES)
+    for name in registry:
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _palette_from_record(record: Mapping[str, object]) -> Palette:
+    raw_palette = record.get("palette")
+    if not isinstance(raw_palette, Mapping):
+        raise ValueError("theme plugin record must include a palette object")
+    colors = {str(key): parse_color(str(value)) for key, value in raw_palette.items()}
+    return Palette.model_validate(colors)

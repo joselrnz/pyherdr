@@ -2648,6 +2648,37 @@ search_roots = ["{configured.as_posix()}"]
 
         self.assertTrue(any(preset.id == "ops-shell" for preset in app._launcher_presets))
 
+    async def test_tui_loads_and_applies_theme_plugin(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "theme.py").write_text(
+                "def themes():\n"
+                "    return {'ops-dark': {\n"
+                "        'accent': '#00ffff', 'panel_bg': '#101820', 'surface0': '#17232d',\n"
+                "        'surface1': '#20313d', 'surface_dim': '#0b1117', 'overlay0': '#5d7788',\n"
+                "        'overlay1': '#7894a7', 'text': '#e8f7ff', 'subtext0': '#a8c4d4',\n"
+                "        'mauve': '#c4a7ff', 'green': '#70e08d', 'yellow': '#ffd166',\n"
+                "        'red': '#ff6b8a', 'blue': '#5abfff', 'teal': '#2dd4bf', 'peach': '#ffb86b',\n"
+                "    }}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "plugin.json"
+            manifest.write_text(
+                '{"name":"ops-themes","version":"1.0.0","kind":"theme","entrypoint":"theme.py"}',
+                encoding="utf-8",
+            )
+            config = Config(plugins=PluginsConfig(themes=[str(manifest)]))
+
+            with patch("pyherdr.presentation.tui.load_config", return_value=config):
+                app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+
+        self.assertIn("ops-dark", app._theme_names)
+        app.apply_theme("ops-dark")
+        self.assertEqual(app._palette.accent, "#00ffff")
+
     async def test_command_palette_includes_launcher_presets(self):
         client = FakeClient()
         app = PyHerdrTui(client=client, poll_interval=100)

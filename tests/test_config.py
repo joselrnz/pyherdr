@@ -209,6 +209,7 @@ pane_id = "pane_2"
 [plugins]
 detectors = ["./plugins/sample/plugin.json", "C:/tools/other/plugin.json"]
 launchers = ["./plugins/launchers/plugin.json"]
+themes = ["./plugins/themes/plugin.json"]
 """.strip(),
                 encoding="utf-8",
             )
@@ -218,6 +219,7 @@ launchers = ["./plugins/launchers/plugin.json"]
         self.assertEqual(config.plugins.detectors[0], "./plugins/sample/plugin.json")
         self.assertEqual(config.plugins.detectors[1], "C:/tools/other/plugin.json")
         self.assertEqual(config.plugins.launchers[0], "./plugins/launchers/plugin.json")
+        self.assertEqual(config.plugins.themes[0], "./plugins/themes/plugin.json")
 
 
 if __name__ == "__main__":
