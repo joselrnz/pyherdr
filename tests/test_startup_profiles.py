@@ -17,13 +17,41 @@ class StartupProfileTests(unittest.TestCase):
         config = Config(connections={"prod": ConnectionConfig(host="prod.example.com", user="jose", port=2222)})
         pane = ProfilePaneConfig(name="prod", connection="prod")
 
-        self.assertEqual(build_pane_command(config, pane), "ssh -p 2222 jose@prod.example.com")
+        self.assertEqual(build_pane_command(config, pane), "ssh -p 2222 -o ConnectTimeout=10 jose@prod.example.com")
 
     def test_build_pane_command_adds_key_and_remote_command(self):
         config = Config(connections={"logs": ConnectionConfig(host="logs.example.com", key="~/.ssh/logs")})
         pane = ProfilePaneConfig(name="logs", connection="logs", command="journalctl -f")
 
-        self.assertEqual(build_pane_command(config, pane), "ssh -i '~/.ssh/logs' logs.example.com 'journalctl -f'")
+        self.assertEqual(
+            build_pane_command(config, pane),
+            "ssh -i '~/.ssh/logs' -o ConnectTimeout=10 logs.example.com 'journalctl -f'",
+        )
+
+    def test_build_pane_command_applies_remote_connection_options(self):
+        config = Config(
+            connections={
+                "prod": ConnectionConfig(
+                    host="prod.example.com",
+                    user="ops",
+                    connect_timeout=8,
+                    batch_mode=True,
+                    strict_host_key_checking="accept-new",
+                    server_alive_interval=30,
+                    server_alive_count_max=2,
+                    request_tty=True,
+                    remote_cwd="/srv/app",
+                )
+            }
+        )
+        pane = ProfilePaneConfig(name="prod", connection="prod", command="journalctl -fu app")
+
+        self.assertEqual(
+            build_pane_command(config, pane),
+            "ssh -t -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "
+            "-o ServerAliveInterval=30 -o ServerAliveCountMax=2 ops@prod.example.com "
+            "'cd /srv/app && journalctl -fu app'",
+        )
 
     def test_validate_startup_config_catches_bad_references_and_passwords(self):
         config = Config(
@@ -48,6 +76,27 @@ class StartupProfileTests(unittest.TestCase):
         self.assertIn("profile ops pane prod references missing connection missing", result.errors)
         self.assertIn("profile ops has duplicate pane name prod", result.errors)
         self.assertIn("workflow health step references missing pane ghost", result.errors)
+
+    def test_validate_startup_config_catches_invalid_ssh_options(self):
+        config = Config(
+            connections={
+                "bad": ConnectionConfig(
+                    host="prod.example.com",
+                    connect_timeout=0,
+                    strict_host_key_checking="maybe",
+                    server_alive_interval=-1,
+                    server_alive_count_max=-2,
+                )
+            }
+        )
+
+        result = validate_startup_config(config)
+
+        self.assertFalse(result.ok)
+        self.assertIn("connection bad connect_timeout must be positive", result.errors)
+        self.assertIn("connection bad strict_host_key_checking must be yes, no, accept-new, or empty", result.errors)
+        self.assertIn("connection bad server_alive_interval cannot be negative", result.errors)
+        self.assertIn("connection bad server_alive_count_max cannot be negative", result.errors)
 
     def test_plan_profile_expands_connection_references_without_duplication(self):
         config = Config(
@@ -79,7 +128,7 @@ class StartupProfileTests(unittest.TestCase):
 
         self.assertEqual(plan["workspace"], "ops")
         self.assertEqual(plan["layout"], "main-left")
-        self.assertEqual(plan["panes"][0]["command"], "ssh ops@prod.example.com uptime")
+        self.assertEqual(plan["panes"][0]["command"], "ssh -o ConnectTimeout=10 ops@prod.example.com uptime")
         self.assertEqual(plan["panes"][0]["env"], {"APP_ENV": "prod", "REGION": "eu"})
         self.assertEqual(
             plan["panes"][0]["health"],

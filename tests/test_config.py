@@ -98,6 +98,13 @@ type = "ssh"
 host = "host{i}.example.com"
 user = "ops"
 key = "~/.ssh/id_ed25519"
+connect_timeout = 8
+batch_mode = true
+strict_host_key_checking = "accept-new"
+server_alive_interval = 30
+server_alive_count_max = 2
+request_tty = true
+remote_cwd = "/srv/app"
 """.strip()
                 for i in range(1, 101)
             )
@@ -144,6 +151,13 @@ send = "uptime"
 
         self.assertEqual(len(config.connections), 100)
         self.assertEqual(config.connections["host10"].host, "host10.example.com")
+        self.assertEqual(config.connections["host1"].connect_timeout, 8)
+        self.assertTrue(config.connections["host1"].batch_mode)
+        self.assertEqual(config.connections["host1"].strict_host_key_checking, "accept-new")
+        self.assertEqual(config.connections["host1"].server_alive_interval, 30)
+        self.assertEqual(config.connections["host1"].server_alive_count_max, 2)
+        self.assertTrue(config.connections["host1"].request_tty)
+        self.assertEqual(config.connections["host1"].remote_cwd, "/srv/app")
         self.assertEqual(config.profiles["ops"].env, {"APP_ENV": "prod"})
         self.assertEqual(config.profiles["ops"].panes[1].connection, "host10")
         self.assertEqual(config.profiles["ops"].panes[0].env, {"HOST_ROLE": "api"})

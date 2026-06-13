@@ -2,8 +2,9 @@ import subprocess
 import unittest
 
 from pyherdr.api import dispatch
+from pyherdr.config import ConnectionConfig
 from pyherdr.models import AppState
-from pyherdr.remote import probe_remote
+from pyherdr.remote import probe_connection, probe_remote
 
 
 class RemoteTests(unittest.TestCase):
@@ -26,6 +27,51 @@ class RemoteTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("permission denied", result["message"])
         self.assertIn("ssh", result["command"][0])
+
+    def test_remote_probe_uses_connection_ssh_options(self):
+        captured: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            captured.append(command)
+            return subprocess.CompletedProcess(command, 0, "pyherdr 1.0", "")
+
+        connection = ConnectionConfig(
+            host="prod.example.com",
+            user="ops",
+            port=2222,
+            key="~/.ssh/prod",
+            proxy_jump="bastion",
+            connect_timeout=8,
+            strict_host_key_checking="accept-new",
+        )
+
+        result = probe_connection("prod", connection, runner=fake_run)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["connection"], "prod")
+        self.assertEqual(result["host"], "prod.example.com")
+        self.assertEqual(result["target"], "ops@prod.example.com")
+        self.assertEqual(
+            captured[0],
+            [
+                "ssh",
+                "-p",
+                "2222",
+                "-i",
+                "~/.ssh/prod",
+                "-J",
+                "bastion",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=8",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "ops@prod.example.com",
+                "pyherdr",
+                "--version",
+            ],
+        )
 
     def test_remote_pane_metadata_is_distinct_from_local(self):
         state = AppState.bootstrap(cwd="C:/work")

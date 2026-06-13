@@ -141,6 +141,13 @@ class ConnectionConfig(_Section):
     key: str = ""
     proxy_jump: str = ""
     extra_args: list[str] = Field(default_factory=list)
+    connect_timeout: int = 10
+    batch_mode: bool = False
+    strict_host_key_checking: str = ""
+    server_alive_interval: int = 0
+    server_alive_count_max: int = 0
+    request_tty: bool = False
+    remote_cwd: str = ""
     # Deliberately parsed so validation can reject raw password storage.
     password: str = ""
 

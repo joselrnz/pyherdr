@@ -465,7 +465,7 @@ class CliTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["type"], "profile_plan")
-        self.assertEqual(payload["panes"][0]["command"], "ssh ops@prod.example.com uptime")
+        self.assertEqual(payload["panes"][0]["command"], "ssh -o ConnectTimeout=10 ops@prod.example.com uptime")
 
     def test_profile_start_creates_and_starts_profile_panes(self):
         from pyherdr.cli import run_profile
@@ -575,7 +575,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(restored_sessions, ["before"])
         self.assertEqual([pane["name"] for pane in payload["panes"]], ["local", "prod", "logs"])
         start_commands = [call["params"]["command"] for call in calls if call["method"] == "pane.start"]
-        self.assertEqual(start_commands, ["ssh ops@prod.example.com uptime", "tail -f app.log", "pwsh"])
+        self.assertEqual(
+            start_commands,
+            ["ssh -o ConnectTimeout=10 ops@prod.example.com uptime", "tail -f app.log", "pwsh"],
+        )
         start_envs = [call["params"].get("env", {}) for call in calls if call["method"] == "pane.start"]
         self.assertEqual(
             start_envs,

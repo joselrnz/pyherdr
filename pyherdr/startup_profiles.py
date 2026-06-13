@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import Config, ConnectionConfig, ConnectionType, ProfileConfig, ProfilePaneConfig, WorkflowConfig
 from .layout import Direction, PaneNode, SplitNode, TileLayout, build_template_layout
+from .remote import ssh_base_command, ssh_target
 
 
 @dataclass(frozen=True)
@@ -23,18 +24,14 @@ class StartupValidation:
 def build_ssh_command(connection: ConnectionConfig, remote_command: str = "") -> str:
     if not connection.host:
         return ""
-    parts = ["ssh"]
-    if connection.port and connection.port != 22:
-        parts.extend(["-p", str(connection.port)])
-    if connection.key:
-        parts.extend(["-i", connection.key])
-    if connection.proxy_jump:
-        parts.extend(["-J", connection.proxy_jump])
-    parts.extend(connection.extra_args)
-    target = f"{connection.user}@{connection.host}" if connection.user else connection.host
-    parts.append(target)
-    if remote_command:
-        parts.append(remote_command)
+    parts = [*ssh_base_command(connection), ssh_target(connection)]
+    command = remote_command
+    if connection.remote_cwd and command:
+        command = f"cd {shlex.quote(connection.remote_cwd)} && {command}"
+    elif connection.remote_cwd:
+        command = f"cd {shlex.quote(connection.remote_cwd)} && exec $SHELL -l"
+    if command:
+        parts.append(command)
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -99,6 +96,18 @@ def validate_startup_config(config: Config, *, profile_name: str | None = None) 
             errors.append(f"connection {name} is ssh but has no host")
         if connection.password:
             errors.append(f"connection {name} uses unsupported password storage")
+        if connection.connect_timeout < 1:
+            errors.append(f"connection {name} connect_timeout must be positive")
+        if connection.strict_host_key_checking and connection.strict_host_key_checking not in {
+            "yes",
+            "no",
+            "accept-new",
+        }:
+            errors.append(f"connection {name} strict_host_key_checking must be yes, no, accept-new, or empty")
+        if connection.server_alive_interval < 0:
+            errors.append(f"connection {name} server_alive_interval cannot be negative")
+        if connection.server_alive_count_max < 0:
+            errors.append(f"connection {name} server_alive_count_max cannot be negative")
 
     selected_profiles = (
         {profile_name: config.profiles[profile_name]}
