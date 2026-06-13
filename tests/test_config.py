@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from pyherdr.config import load_config
+from tools.docs_site import check_docs_site
 
 
 class ConfigTests(unittest.TestCase):
@@ -39,6 +40,9 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("better than tmux", readme.lower())
         self.assertNotIn("better than zellij", readme.lower())
         self.assertNotIn("faster than tmux", readme.lower())
+
+    def test_docs_site_decision_check_passes(self):
+        self.assertEqual(check_docs_site(), [])
 
     def test_workspace_search_config_loads_from_toml(self):
         with tempfile.TemporaryDirectory() as tmp:
