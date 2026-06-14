@@ -31,6 +31,7 @@ It focuses on product capabilities instead of implementation trackers.
 - **Multiplexer Scenario** — one scenario proves multiplexer fundamentals.
 - **Polished Agent UX Scenario** — one scenario proves polished agent UX.
 - **Remote Scenario** — one scenario proves remote workspace story.
+- **Headless Scenario** — one scenario proves CI/headless story.
 - **Documentation Truth Pass** — public docs do not promise missing behavior.
 
 ## Next
@@ -50,7 +51,6 @@ It focuses on product capabilities instead of implementation trackers.
 - **Project Config** — .pyherdr.toml or equivalent config controls project commands.
 - **Issue Templates** — users can file useful bugs and feature requests.
 - **Security Policy** — users know how to report token/security issues.
-- **Headless Scenario** — one scenario proves CI/headless story.
 - **Plugin Scenario** — one scenario proves extension story.
 - **Recovery Scenario** — one scenario proves resilience.
 

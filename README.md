@@ -208,6 +208,16 @@ python -m tools.remote_scenario --json
 python -m tools.remote_scenario --host 150 --connection walter --live-probe
 ```
 
+### Run the headless automation scenario
+
+The headless scenario proves the CI/no-TUI automation path: create a workspace,
+run a command in a pane, wait for output and completion status, capture pane
+scrollback, and restore the saved session state.
+
+```bash
+python -m tools.headless_scenario --json
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
