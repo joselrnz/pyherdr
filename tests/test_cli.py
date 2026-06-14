@@ -948,6 +948,59 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["port"], 4567)
         self.assertNotIn("secret-token", stdout.getvalue())
 
+    def test_server_restart_parses(self):
+        args = build_parser().parse_args(["server", "restart"])
+
+        self.assertEqual(args.command, "server")
+        self.assertEqual(args.server_command, "restart")
+
+    def test_server_restart_stops_then_starts_and_redacts_token(self):
+        from pyherdr.cli import run_server
+        from pyherdr.server import ServerInfo
+
+        info = ServerInfo("127.0.0.1", 4567, 123, "state.json", "secret-token")
+        args = build_parser().parse_args(["server", "restart"])
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.stop_running", return_value=True) as stop,
+            patch("pyherdr.cli.start_background", return_value=info) as start,
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_server(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["restarted"])
+        self.assertTrue(payload["stopped"])
+        self.assertEqual(payload["server"]["port"], 4567)
+        self.assertNotIn("secret-token", stdout.getvalue())
+        stop.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_server_status_reports_stale_info_and_repair_hint(self):
+        from pyherdr.cli import run_server
+        from pyherdr.server import ServerInfo
+
+        info = ServerInfo("127.0.0.1", 4567, 123, "state.json", "secret-token")
+        args = build_parser().parse_args(["server", "status"])
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.read_server_info", return_value=info),
+            patch("pyherdr.cli.ping", return_value=False),
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_server(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(payload["running"])
+        self.assertTrue(payload["stale"])
+        self.assertEqual(payload["state_path"], "state.json")
+        self.assertEqual(payload["repair"], "pyherdr server restart")
+        self.assertNotIn("secret-token", stdout.getvalue())
+
     def test_session_record_parses_output_lines_and_styled_flags(self):
         args = build_parser().parse_args(["session", "record", "--output", "rec.json", "--lines", "50", "--styled"])
 

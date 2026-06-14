@@ -297,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     server_sub = server.add_subparsers(dest="server_command", required=True)
     server_sub.add_parser("start")
     server_sub.add_parser("stop")
+    server_sub.add_parser("restart")
     server_sub.add_parser("status")
     server_run = server_sub.add_parser("run")
     server_run.add_argument("--host", default="127.0.0.1")
@@ -537,12 +538,7 @@ def print_status() -> int:
     print(
         json.dumps(
             {
-                "server": {
-                    "running": ping(info),
-                    "host": info.host if info else None,
-                    "port": info.port if info else None,
-                    "pid": info.pid if info else None,
-                },
+                "server": _server_status(info),
                 "session": {"workspaces": workspaces, "tabs": tabs, "panes": panes},
             },
             indent=2,
@@ -1200,20 +1196,14 @@ def run_server(args) -> int:
         stopped = stop_running()
         print(json.dumps({"stopped": stopped}, indent=2))
         return 0 if stopped else 1
+    if args.server_command == "restart":
+        stopped = stop_running()
+        info = start_background()
+        print(json.dumps({"restarted": True, "stopped": stopped, "server": _public_server_info(info)}, indent=2))
+        return 0
     if args.server_command == "status":
         info = read_server_info()
-        running = ping(info)
-        print(
-            json.dumps(
-                {
-                    "running": running,
-                    "host": info.host if info and running else None,
-                    "port": info.port if info and running else None,
-                    "pid": info.pid if info and running else None,
-                },
-                indent=2,
-            )
-        )
+        print(json.dumps(_server_status(info), indent=2))
         return 0
     return 2
 
@@ -1321,6 +1311,20 @@ def _session_counts(state) -> dict[str, int]:
         "workspaces": len(state.workspaces),
         "tabs": sum(len(workspace.tabs) for workspace in state.workspaces),
         "panes": sum(len(tab.panes) for workspace in state.workspaces for tab in workspace.tabs),
+    }
+
+
+def _server_status(info: ServerInfo | None = None) -> dict[str, Any]:
+    running = ping(info)
+    stale = bool(info and not running)
+    return {
+        "running": running,
+        "stale": stale,
+        "host": info.host if info and running else None,
+        "port": info.port if info and running else None,
+        "pid": info.pid if info and running else None,
+        "state_path": info.state_path if info else None,
+        "repair": "pyherdr server restart" if stale else None,
     }
 
 
