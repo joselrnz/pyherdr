@@ -15,9 +15,24 @@ class DiagnosticsTests(unittest.TestCase):
             workflow = root / "workflow.jsonl"
             server = root / "server.json"
             output = root / "bundle.zip"
-            state.write_text(json.dumps({"env": {"token": "abc"}, "line": "password=hunter2"}), encoding="utf-8")
-            workflow.write_text(json.dumps({"details": {"api_key": "sk-test"}}) + "\n", encoding="utf-8")
-            server.write_text(json.dumps({"host": "127.0.0.1", "port": 1234, "token": "secret"}), encoding="utf-8")
+            state.write_text(
+                json.dumps(
+                    {
+                        "env": {"token": "abc"},
+                        "line": "password=hunter2 Authorization: Bearer bearer-token",
+                        "remote": "https://user:url-pass@example.com/path",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            workflow.write_text(
+                json.dumps({"details": {"api_key": "sk-test", "command": "--token cli-secret"}}) + "\n",
+                encoding="utf-8",
+            )
+            server.write_text(
+                json.dumps({"host": "127.0.0.1", "port": 1234, "token": "server-token-value"}),
+                encoding="utf-8",
+            )
 
             created = create_debug_bundle(
                 output,
@@ -36,8 +51,11 @@ class DiagnosticsTests(unittest.TestCase):
                 payload = "\n".join(archive.read(name).decode("utf-8") for name in sorted(names))
 
         self.assertNotIn("hunter2", payload)
+        self.assertNotIn("bearer-token", payload)
+        self.assertNotIn("url-pass", payload)
         self.assertNotIn("sk-test", payload)
-        self.assertNotIn("secret", payload)
+        self.assertNotIn("cli-secret", payload)
+        self.assertNotIn("server-token-value", payload)
         self.assertIn("[redacted]", payload)
 
 

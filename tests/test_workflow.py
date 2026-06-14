@@ -12,6 +12,7 @@ from pyherdr.workflow import (
     new_event,
     read_events,
     redact,
+    redact_text,
 )
 
 
@@ -30,6 +31,37 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(redacted["nested"]["safe"], "visible")
         self.assertIn("token=[redacted]", redacted["line"])
         self.assertIn("password=[redacted]", redacted["line"])
+
+    def test_redacts_log_text_secret_shapes(self):
+        line = (
+            "Authorization: Bearer bearer-token "
+            "\"api_key\": \"sk-test\" "
+            "'password': 'hunter2' "
+            "--token cli-token "
+            "access_token=access-token "
+            "client-secret: client-secret-value "
+            "url=https://user:url-pass@example.com/path"
+        )
+
+        redacted = redact_text(line)
+
+        for secret in (
+            "bearer-token",
+            "sk-test",
+            "hunter2",
+            "cli-token",
+            "access-token",
+            "client-secret-value",
+            "url-pass",
+        ):
+            self.assertNotIn(secret, redacted)
+        self.assertIn("Authorization: Bearer [redacted]", redacted)
+        self.assertIn('"api_key": "[redacted]"', redacted)
+        self.assertIn("'password': '[redacted]'", redacted)
+        self.assertIn("--token [redacted]", redacted)
+        self.assertIn("access_token=[redacted]", redacted)
+        self.assertIn("client-secret: [redacted]", redacted)
+        self.assertIn("https://user:[redacted]@example.com/path", redacted)
 
     def test_append_event_keeps_bounded_jsonl_log(self):
         with tempfile.TemporaryDirectory() as tmp:

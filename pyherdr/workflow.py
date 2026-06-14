@@ -13,9 +13,20 @@ from .session import session_runtime_dir
 
 REDACTED = "[redacted]"
 SENSITIVE_KEY_PARTS = ("token", "secret", "password", "passwd", "authorization", "api_key", "apikey")
-ASSIGNMENT_SECRET_RE = re.compile(
-    r"(?i)\b(token|secret|password|passwd|authorization|api[_-]?key)\s*=\s*([^ \t\r\n;&]+)"
+SENSITIVE_KEY_PATTERN = (
+    r"[A-Za-z0-9_.-]*(?:token|secret|password|passwd|authorization|api[_-]?key|apikey)[A-Za-z0-9_.-]*"
 )
+ASSIGNMENT_SECRET_RE = re.compile(
+    rf"(?i)\b({SENSITIVE_KEY_PATTERN})(\s*=\s*)([^ \t\r\n;&,]+)"
+)
+JSON_SECRET_RE = re.compile(rf"""(?i)(["']?)({SENSITIVE_KEY_PATTERN})\1(\s*:\s*)(["'])(.*?)\4""")
+COLON_SECRET_RE = re.compile(rf"(?i)\b({SENSITIVE_KEY_PATTERN})(\s*:\s*)(?![\"'])([^ \t\r\n;&,]+)")
+AUTH_HEADER_RE = re.compile(r"(?i)\b(authorization\s*:\s*)(bearer|basic)(\s+)([^ \t\r\n;&,]+)")
+CLI_SECRET_RE = re.compile(
+    r"(?i)(--(?:token|secret|password|passwd|authorization|api-key|api_key|apikey|access-token|refresh-token|"
+    r"client-secret))(\s+)([^ \t\r\n;&]+)"
+)
+URL_PASSWORD_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@]+):([^@\s/]+)@")
 
 
 @dataclass(frozen=True)
@@ -87,8 +98,30 @@ def redact(value: Any) -> Any:
     if isinstance(value, tuple):
         return [redact(item) for item in value]
     if isinstance(value, str):
-        return ASSIGNMENT_SECRET_RE.sub(lambda match: f"{match.group(1)}={REDACTED}", value)
+        return redact_text(value)
     return value
+
+
+def redact_text(value: str) -> str:
+    """Redact common secret shapes from log/debug text."""
+    text = AUTH_HEADER_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{match.group(3)}{REDACTED}", value)
+    text = JSON_SECRET_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{match.group(1)}{match.group(3)}"
+        f"{match.group(4)}{REDACTED}{match.group(4)}",
+        text,
+    )
+    text = CLI_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+    text = ASSIGNMENT_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+    text = COLON_SECRET_RE.sub(_replace_colon_secret, text)
+    return URL_PASSWORD_RE.sub(lambda match: f"{match.group(1)}:{REDACTED}@", text)
+
+
+def _replace_colon_secret(match: re.Match[str]) -> str:
+    key = match.group(1)
+    value = match.group(3)
+    if key.lower().replace("-", "_") == "authorization" and value.lower() in {"bearer", "basic"}:
+        return match.group(0)
+    return f"{key}{match.group(2)}{REDACTED}"
 
 
 def _is_sensitive_key(key: str) -> bool:
