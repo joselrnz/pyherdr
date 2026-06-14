@@ -174,6 +174,16 @@ a detach/reattach check.
 python -m tools.daily_driver_scenario --json
 ```
 
+### Run the multiplexer scenario
+
+The Zellij/tmux-class scenario proves split-pane fundamentals without launching
+the TUI: split, resize, swap, zoom-view, save a custom layout, and apply it to a
+fresh tab.
+
+```bash
+python -m tools.zmux_scenario --json
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:

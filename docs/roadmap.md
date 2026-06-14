@@ -28,6 +28,7 @@ It focuses on product capabilities instead of implementation trackers.
 - **Detector Coverage** — agent detectors have transcript coverage.
 - **Release Smoke** — release candidate can install and launch.
 - **Daily Driver Scenario** — one scripted scenario exercises daily agent work.
+- **Multiplexer Scenario** — one scenario proves multiplexer fundamentals.
 - **Documentation Truth Pass** — public docs do not promise missing behavior.
 
 ## Next

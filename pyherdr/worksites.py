@@ -46,6 +46,7 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "WS-099",
             "WS-100",
             "WS-103",
+            "WS-104",
             "WS-110",
         ),
     ),
@@ -68,7 +69,6 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "WS-078",
             "WS-079",
             "WS-080",
-            "WS-104",
             "WS-106",
             "WS-107",
             "WS-108",
@@ -94,6 +94,9 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
 )
+PUBLIC_ROADMAP_TITLES = {
+    "WS-104": "Multiplexer Scenario",
+}
 
 
 @dataclass(frozen=True)
@@ -228,7 +231,7 @@ def _parse_worksite_block(worksite_id: str, title: str, lines: list[str]) -> Wor
 
 
 def _public_row(worksite: Worksite) -> str:
-    title = _public_text(worksite.title)
+    title = _public_text(PUBLIC_ROADMAP_TITLES.get(worksite.id, worksite.title))
     outcome = _public_text(worksite.outcome)
     if not title or not outcome:
         return ""
