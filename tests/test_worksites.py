@@ -6,7 +6,13 @@ from io import StringIO
 from pathlib import Path
 
 from pyherdr.cli import main
-from pyherdr.worksites import check_worksite_tracking, parse_worksites, worksite_summary
+from pyherdr.worksites import (
+    FORBIDDEN_PUBLIC_ROADMAP_TERMS,
+    check_worksite_tracking,
+    parse_worksites,
+    public_roadmap_markdown,
+    worksite_summary,
+)
 
 PLAN_SAMPLE = """
 ### WS-001 Done Thing
@@ -89,3 +95,53 @@ class WorksiteTrackerTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["active"], 1)
         self.assertEqual(payload["issues"], [])
         self.assertEqual(payload["worksites"][1]["id"], "WS-002")
+
+    def test_public_roadmap_is_sanitized_subset(self):
+        plan = """
+### WS-025 Sidebar Fidelity
+- [x] Outcome: sidebar shows workspace and agent context richly.
+- Scope: sidebar renderer.
+- Validation: covered.
+
+### WS-036 URL Action
+- [ ] Outcome: ctrl-click URL opens or copies according to config.
+- Scope: URL detection, mouse input.
+- Validation: fixture identifies links.
+
+### WS-102 Public Roadmap
+- [ ] Outcome: public roadmap is a sanitized subset of MEGA_PLAN.md.
+- Scope: README/docs.
+- Validation: no local-only notes leak.
+
+### WS-110 Documentation Truth Pass
+- [x] Outcome: public docs do not promise missing behavior.
+- Scope: README/docs/PyPI.
+- Validation: feature claims map to completed work.
+""".strip()
+
+        public = public_roadmap_markdown(parse_worksites(plan))
+
+        self.assertIn("# PyHerdr Roadmap", public)
+        self.assertIn("Sidebar Fidelity", public)
+        self.assertIn("URL Action", public)
+        self.assertNotIn("WS-025", public)
+        self.assertNotIn("MEGA_PLAN", public)
+        for term in FORBIDDEN_PUBLIC_ROADMAP_TERMS:
+            self.assertNotIn(term.lower(), public.lower())
+
+    def test_roadmap_public_cli_writes_sanitized_doc(self):
+        with tempfile.TemporaryDirectory() as temp:
+            plan = Path(temp) / "MEGA_PLAN.md"
+            output = Path(temp) / "roadmap.md"
+            plan.write_text(PLAN_SAMPLE, encoding="utf-8")
+            out = StringIO()
+
+            with redirect_stdout(out):
+                exit_code = main(["roadmap", "public", "--plan", str(plan), "--output", str(output)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(out.getvalue().strip(), str(output))
+            public = output.read_text(encoding="utf-8")
+
+        self.assertIn("# PyHerdr Roadmap", public)
+        self.assertNotIn("WS-001", public)

@@ -9,12 +9,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from pyherdr.worksites import FORBIDDEN_PUBLIC_ROADMAP_TERMS
+
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 CHANGELOG = ROOT / "CHANGELOG.md"
 DOCS_DIR = ROOT / "docs"
 DECISION = DOCS_DIR / "site-decision.md"
 RELEASE_CHECKLIST = DOCS_DIR / "release-checklist.md"
+ROADMAP = DOCS_DIR / "roadmap.md"
 
 
 def check_docs_site(root: Path = ROOT) -> list[str]:
@@ -32,6 +35,8 @@ def check_docs_site(root: Path = ROOT) -> list[str]:
         for heading in ("## 🚀 Quick start", "## How PyHerdr Compares", "## 🧰 CLI"):
             if heading not in readme_text:
                 errors.append(f"README.md is missing {heading!r}")
+        if "docs/roadmap.md" not in readme_text:
+            errors.append("README.md must link to docs/roadmap.md")
 
     if not changelog.exists():
         errors.append("CHANGELOG.md is missing")
@@ -56,6 +61,17 @@ def check_docs_site(root: Path = ROOT) -> list[str]:
         for required in ("version", "ruff check", "mypy", "unittest", "twine check", "git tag", "publish"):
             if required not in checklist_text:
                 errors.append(f"docs/release-checklist.md must cover {required!r}")
+
+    roadmap = docs_dir / "roadmap.md"
+    if not roadmap.exists():
+        errors.append("docs/roadmap.md is missing")
+    else:
+        roadmap_text = roadmap.read_text(encoding="utf-8")
+        if "# PyHerdr Roadmap" not in roadmap_text:
+            errors.append("docs/roadmap.md must include the public roadmap title")
+        for term in ("WS-", *FORBIDDEN_PUBLIC_ROADMAP_TERMS):
+            if term.lower() in roadmap_text.lower():
+                errors.append(f"docs/roadmap.md must not include internal term {term!r}")
 
     tracked_docs = sorted(path for path in docs_dir.glob("*.md") if path.name != "site-decision.md")
     if not tracked_docs:

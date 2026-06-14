@@ -7,6 +7,93 @@ from dataclasses import dataclass
 WORKSITE_HEADING = re.compile(r"^###\s+(WS-\d{3})\s+(.+?)\s*$")
 OUTCOME_LINE = re.compile(r"^-\s+\[(?P<checked>[ xX])\]\s+Outcome:\s*(?P<outcome>.+?)\s*$")
 FIELD_LINE = re.compile(r"^-\s+(?P<name>Status|Owner|Linked PR|PR|Scope|Validation):\s*(?P<value>.+?)\s*$")
+FORBIDDEN_PUBLIC_ROADMAP_TERMS = (
+    "MEGA_PLAN",
+    "GUI_GAP_PLAN",
+    "PORTING_",
+    "PORTING",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "GhostC",
+    "Zmux",
+    "local-only",
+    "worksite",
+)
+PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Available Now",
+        (
+            "WS-025",
+            "WS-026",
+            "WS-027",
+            "WS-031",
+            "WS-032",
+            "WS-033",
+            "WS-034",
+            "WS-039",
+            "WS-041",
+            "WS-047",
+            "WS-051",
+            "WS-053",
+            "WS-054",
+            "WS-063",
+            "WS-064",
+            "WS-065",
+            "WS-066",
+            "WS-067",
+            "WS-068",
+            "WS-096",
+            "WS-099",
+            "WS-100",
+            "WS-110",
+        ),
+    ),
+    (
+        "Next",
+        (
+            "WS-012",
+            "WS-014",
+            "WS-015",
+            "WS-016",
+            "WS-019",
+            "WS-021",
+            "WS-028",
+            "WS-036",
+            "WS-040",
+            "WS-042",
+            "WS-043",
+            "WS-045",
+            "WS-046",
+            "WS-078",
+            "WS-079",
+            "WS-080",
+            "WS-103",
+            "WS-104",
+            "WS-106",
+            "WS-107",
+            "WS-108",
+            "WS-109",
+        ),
+    ),
+    (
+        "Later",
+        (
+            "WS-044",
+            "WS-060",
+            "WS-061",
+            "WS-112",
+            "WS-113",
+            "WS-114",
+            "WS-115",
+            "WS-116",
+            "WS-117",
+            "WS-118",
+            "WS-119",
+            "WS-120",
+            "WS-121",
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +177,27 @@ def worksite_summary(worksites: Iterable[Worksite]) -> dict[str, int]:
     return summary
 
 
+def public_roadmap_markdown(worksites: Iterable[Worksite]) -> str:
+    """Render a curated public roadmap without internal tracker details."""
+    by_id = {worksite.id: worksite for worksite in worksites}
+    lines = [
+        "# PyHerdr Roadmap",
+        "",
+        "This is a public, user-facing snapshot of where PyHerdr is headed.",
+        "It focuses on product capabilities instead of implementation trackers.",
+        "",
+    ]
+    for heading, ids in PUBLIC_ROADMAP_GROUPS:
+        rows = [_public_row(by_id[worksite_id]) for worksite_id in ids if worksite_id in by_id]
+        rows = [row for row in rows if row]
+        if not rows:
+            continue
+        lines.extend([f"## {heading}", ""])
+        lines.extend(rows)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _parse_worksite_block(worksite_id: str, title: str, lines: list[str]) -> Worksite:
     checked = False
     outcome = ""
@@ -117,6 +225,22 @@ def _parse_worksite_block(worksite_id: str, title: str, lines: list[str]) -> Wor
         linked_pr=linked_pr,
         validation=fields.get("validation", ""),
     )
+
+
+def _public_row(worksite: Worksite) -> str:
+    title = _public_text(worksite.title)
+    outcome = _public_text(worksite.outcome)
+    if not title or not outcome:
+        return ""
+    return f"- **{title}** — {outcome}"
+
+
+def _public_text(value: str) -> str:
+    text = value.replace("`", "").strip()
+    for forbidden in FORBIDDEN_PUBLIC_ROADMAP_TERMS:
+        if forbidden.lower() in text.lower():
+            return ""
+    return text
 
 
 def _normalize_status(value: str) -> str:

@@ -274,6 +274,9 @@ def build_parser() -> argparse.ArgumentParser:
     roadmap_check = roadmap_sub.add_parser("check", help="validate worksite tracking metadata")
     roadmap_check.add_argument("--plan", default="MEGA_PLAN.md", help="plan markdown file to inspect")
     roadmap_check.add_argument("--json", action="store_true", help="print machine-readable tracker output")
+    roadmap_public = roadmap_sub.add_parser("public", help="write a sanitized public roadmap")
+    roadmap_public.add_argument("--plan", default="MEGA_PLAN.md", help="plan markdown file to inspect")
+    roadmap_public.add_argument("--output", default="docs/roadmap.md", help="public roadmap Markdown file to write")
 
     schedule = sub.add_parser("schedule", help="cron-scheduled pane commands")
     schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
@@ -684,12 +687,18 @@ def run_workflow(args) -> int:
 
 
 def run_roadmap(args) -> int:
-    from .worksites import check_worksite_tracking, parse_worksites, worksite_summary
+    from .worksites import check_worksite_tracking, parse_worksites, public_roadmap_markdown, worksite_summary
 
-    if args.roadmap_command != "check":
-        return 2
     plan = Path(args.plan)
     worksites = parse_worksites(plan.read_text(encoding="utf-8"))
+    if args.roadmap_command == "public":
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(public_roadmap_markdown(worksites), encoding="utf-8")
+        print(output)
+        return 0
+    if args.roadmap_command != "check":
+        return 2
     issues = check_worksite_tracking(worksites)
     summary = worksite_summary(worksites)
     payload = {

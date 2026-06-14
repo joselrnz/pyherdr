@@ -42,6 +42,16 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("better than tmux", readme.lower())
         self.assertNotIn("better than zellij", readme.lower())
         self.assertNotIn("faster than tmux", readme.lower())
+        self.assertIn("docs/roadmap.md", readme)
+
+    def test_public_roadmap_exists_and_is_sanitized(self):
+        roadmap = Path("docs/roadmap.md").read_text(encoding="utf-8")
+
+        self.assertIn("# PyHerdr Roadmap", roadmap)
+        self.assertIn("Available Now", roadmap)
+        self.assertIn("Next", roadmap)
+        for forbidden in ("WS-", "MEGA_PLAN", "PORTING_", "CLAUDE.md", "AGENTS.md", "GhostC", "Zmux", "local-only"):
+            self.assertNotIn(forbidden.lower(), roadmap.lower())
 
     def test_docs_site_decision_check_passes(self):
         self.assertEqual(check_docs_site(), [])

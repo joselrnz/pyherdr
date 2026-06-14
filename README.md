@@ -65,6 +65,8 @@ general-purpose multiplexer. Use PyHerdr when the job is coordinating many
 agent or SSH panes and you want the terminal, API, workflow log, and plugin
 surface to understand that workflow.
 
+See the user-facing roadmap in [docs/roadmap.md](docs/roadmap.md).
+
 ## Glossary
 
 - **Fan-out:** send one command or text input to several panes at once. PyHerdr
