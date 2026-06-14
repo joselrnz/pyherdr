@@ -56,6 +56,7 @@ from ..workspace_search import (
     search_workspace_rows,
 )
 from .client import PaneClient, ServerClient
+from .watchdog import BackgroundTaskWatchdog, EventLoopWatchdog, WatchdogEvent
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
 _STATUS_PRIORITY = ["blocked", "working", "done", "idle", "unknown"]
@@ -3045,6 +3046,8 @@ class PyHerdrTui(App):
         self._resize = False
         self._spin = 0
         self._seeding = False
+        self._event_loop_watchdog = EventLoopWatchdog(threshold=1.5)
+        self._background_task_watchdog = BackgroundTaskWatchdog(threshold=3.0)
 
     CSS = """
     Screen { background: $ph-base; color: $ph-text; }
@@ -3198,6 +3201,7 @@ class PyHerdrTui(App):
         self.title = "PyHerdr"
         await self.reload()
         self.run_worker(self._terminal_refresh_loop(), group="terminal-refresh", exclusive=True)
+        self.run_worker(self._watchdog_loop(), group="watchdog", exclusive=True)
         self.set_interval(max(1.0, self._poll_interval), self._tick)
 
     # ----- input: prefix model -----
@@ -4735,17 +4739,29 @@ class PyHerdrTui(App):
         else:
             self.notify(f"clipboard unavailable: {result.error}", severity="warning", timeout=3)
 
+    async def _watchdog_loop(self) -> None:
+        await self._event_loop_watchdog.run(self._emit_watchdog_event)
+
+    def _emit_watchdog_event(self, event: WatchdogEvent) -> None:
+        try:
+            self.notify(f"{event.message}; {event.hint}", severity="warning", timeout=6)
+        except Exception:
+            pass
+
+    async def _watchdog_task(self, name: str, awaitable: Any) -> Any:
+        return await self._background_task_watchdog.watch(name, awaitable, self._emit_watchdog_event)
+
     def _tick(self) -> None:
         self._spin += 1
         # Animate the working spinner without a full sidebar rebuild.
         if self._has_working_agent():
             self._refresh_agent_panel()
-        self.run_worker(self._poll_state(), group="poll", exclusive=True)
+        self.run_worker(self._watchdog_task("poll state", self._poll_state()), group="poll", exclusive=True)
 
     async def _terminal_refresh_loop(self) -> None:
         while True:
             try:
-                await self._terminal_refresh_loop_step()
+                await self._watchdog_task("terminal refresh", self._terminal_refresh_loop_step())
             except asyncio.CancelledError:
                 raise
             except Exception:
