@@ -1,5 +1,11 @@
 [
   {
+    "name": "pi_working_status",
+    "agent": "pi",
+    "state": "working",
+    "transcript": "pi_working_status.txt"
+  },
+  {
     "name": "codex_working_status_at_prompt",
     "agent": "codex",
     "state": "working",
@@ -26,5 +32,89 @@
     "state": "working",
     "visible_working": true,
     "transcript": "claude_working_shell.txt"
+  },
+  {
+    "name": "gemini_blocked_confirmation",
+    "agent": "gemini",
+    "state": "blocked",
+    "transcript": "gemini_blocked_confirmation.txt"
+  },
+  {
+    "name": "cursor_blocked_approval",
+    "agent": "cursor",
+    "state": "blocked",
+    "transcript": "cursor_blocked_approval.txt"
+  },
+  {
+    "name": "antigravity_blocked_permission",
+    "agent": "agy",
+    "state": "blocked",
+    "transcript": "antigravity_blocked_permission.txt"
+  },
+  {
+    "name": "cline_blocked_tool_use",
+    "agent": "cline",
+    "state": "blocked",
+    "transcript": "cline_blocked_tool_use.txt"
+  },
+  {
+    "name": "opencode_blocked_permission",
+    "agent": "opencode",
+    "state": "blocked",
+    "transcript": "opencode_blocked_permission.txt"
+  },
+  {
+    "name": "copilot_blocked_selection",
+    "agent": "copilot",
+    "state": "blocked",
+    "transcript": "copilot_blocked_selection.txt"
+  },
+  {
+    "name": "kimi_blocked_approval",
+    "agent": "kimi",
+    "state": "blocked",
+    "transcript": "kimi_blocked_approval.txt"
+  },
+  {
+    "name": "kiro_blocked_tool_approval",
+    "agent": "kiro",
+    "state": "blocked",
+    "transcript": "kiro_blocked_tool_approval.txt"
+  },
+  {
+    "name": "droid_blocked_execute",
+    "agent": "droid",
+    "state": "blocked",
+    "transcript": "droid_blocked_execute.txt"
+  },
+  {
+    "name": "amp_blocked_command",
+    "agent": "amp",
+    "state": "blocked",
+    "transcript": "amp_blocked_command.txt"
+  },
+  {
+    "name": "grok_blocked_permission",
+    "agent": "grok",
+    "state": "blocked",
+    "transcript": "grok_blocked_permission.txt"
+  },
+  {
+    "name": "hermes_blocked_dangerous_command",
+    "agent": "hermes",
+    "state": "blocked",
+    "transcript": "hermes_blocked_dangerous_command.txt"
+  },
+  {
+    "name": "kilo_working_interrupt",
+    "agent": "kilo",
+    "state": "working",
+    "transcript": "kilo_working_interrupt.txt"
+  },
+  {
+    "name": "qodercli_blocked_permission",
+    "agent": "qodercli",
+    "state": "blocked",
+    "transcript": "qodercli_blocked_permission.txt"
   }
 ]

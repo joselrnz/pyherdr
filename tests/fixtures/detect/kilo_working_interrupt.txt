@@ -1,0 +1,2 @@
+opencode status
+esc interrupt

@@ -1,0 +1,5 @@
+Dangerous command
+Allow once
+Allow for this session
+Deny
+Enter to confirm

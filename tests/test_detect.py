@@ -46,10 +46,14 @@ class IdentifyAgentTests(unittest.TestCase):
 class SimpleAgentTests(unittest.TestCase):
     def test_transcript_fixtures_detect_expected_agent_state(self):
         manifest = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))
+        fixture_agents = {case["agent"] for case in manifest}
+        self.assertEqual(fixture_agents, {agent.value for agent in Agent})
         for case in manifest:
             with self.subTest(case=case["name"]):
                 agent = Agent(case["agent"])
-                content = (FIXTURES / case["transcript"]).read_text(encoding="utf-8")
+                transcript = FIXTURES / case["transcript"]
+                self.assertTrue(transcript.exists(), transcript)
+                content = transcript.read_text(encoding="utf-8")
                 detection = detect(agent, content)
                 self.assertEqual(detection.state, AgentStatus(case["state"]))
                 for flag in ("visible_blocker", "visible_idle", "visible_working", "skip_state_update"):
