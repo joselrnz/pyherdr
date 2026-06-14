@@ -228,6 +228,17 @@ detector status updates; a theme plugin; and a recording exporter.
 python -m tools.plugin_scenario --json
 ```
 
+### Run the recovery scenario
+
+The recovery scenario proves a failure-and-reattach loop without launching the
+TUI: a pane command exits nonzero, the blocked status and output are persisted,
+state is reloaded like a server restart, an attached client can capture the
+failed pane, and the pane can run successfully afterward.
+
+```bash
+python -m tools.recovery_scenario --json
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:

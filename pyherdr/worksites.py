@@ -51,6 +51,7 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "WS-106",
             "WS-107",
             "WS-108",
+            "WS-109",
             "WS-110",
         ),
     ),
@@ -73,7 +74,6 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "WS-078",
             "WS-079",
             "WS-080",
-            "WS-109",
         ),
     ),
     (
