@@ -169,9 +169,13 @@ class RequestHandler(BaseRequestHandler):
             )
         self._write(response)
 
-    def _write(self, payload: dict[str, Any]) -> None:
+    def _write(self, payload: dict[str, Any]) -> bool:
         encoded = json.dumps(payload).encode("utf-8") + b"\n"
-        self.request.sendall(encoded)
+        try:
+            self.request.sendall(encoded)
+        except OSError:
+            return False
+        return True
 
 
 def runtime_dir() -> Path:

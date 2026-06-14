@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from pyherdr.presentation.client import ServerClient
-from pyherdr.server import ServerInfo, mutates_state, quiet_request, skips_state_lock
+from pyherdr.server import RequestHandler, ServerInfo, mutates_state, quiet_request, skips_state_lock
 
 
 class MutatesStateTests(unittest.TestCase):
@@ -86,6 +86,25 @@ class ServerClientRequestTests(unittest.TestCase):
 
         self.assertEqual(start.call_count, 2)
         self.assertEqual(send.call_args_list[-1].args[0], second)
+
+
+class RequestHandlerDisconnectTests(unittest.TestCase):
+    def test_write_returns_false_when_client_disconnected(self):
+        for error in (BrokenPipeError("closed"), ConnectionResetError("reset"), OSError("gone")):
+            with self.subTest(error=type(error).__name__):
+                handler = object.__new__(RequestHandler)
+                handler.request = Mock()
+                handler.request.sendall.side_effect = error
+
+                self.assertFalse(handler._write({"id": "request", "result": {"type": "ok"}}))
+
+    def test_write_returns_true_when_response_sent(self):
+        handler = object.__new__(RequestHandler)
+        handler.request = Mock()
+
+        self.assertTrue(handler._write({"id": "request", "result": {"type": "ok"}}))
+        sent = handler.request.sendall.call_args.args[0]
+        self.assertTrue(sent.endswith(b"\n"))
 
 
 if __name__ == "__main__":
