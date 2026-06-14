@@ -118,6 +118,11 @@ class WorksiteTrackerTests(unittest.TestCase):
 - Scope: demo/test script.
 - Validation: covered.
 
+### WS-106 Remote Scenario
+- [x] Outcome: one scenario proves remote workspace story.
+- Scope: demo/test script.
+- Validation: covered.
+
 ### WS-102 Public Roadmap
 - [ ] Outcome: public roadmap is a sanitized subset of MEGA_PLAN.md.
 - Scope: README/docs.
@@ -136,6 +141,7 @@ class WorksiteTrackerTests(unittest.TestCase):
         self.assertIn("URL Action", public)
         self.assertIn("Multiplexer Scenario", public)
         self.assertIn("Polished Agent UX Scenario", public)
+        self.assertIn("Remote Scenario", public)
         self.assertNotIn("WS-025", public)
         self.assertNotIn("MEGA_PLAN", public)
         for term in FORBIDDEN_PUBLIC_ROADMAP_TERMS:

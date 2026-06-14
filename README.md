@@ -196,6 +196,18 @@ screenshot.
 python -m tools.agent_ux_scenario --json
 ```
 
+### Run the remote workspace scenario
+
+The remote scenario proves the SSH workspace path without storing passwords or
+requiring a live host by default: configured connection options, probe command
+construction, startup profile planning, remote pane metadata, and restore from
+saved session state. The default modeled connection is `walter` with host `150`.
+
+```bash
+python -m tools.remote_scenario --json
+python -m tools.remote_scenario --host 150 --connection walter --live-probe
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
