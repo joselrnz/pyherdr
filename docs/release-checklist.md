@@ -37,26 +37,36 @@ to PyPI from tags matching `v*` through PyPI Trusted Publishing.
    .\.venv\Scripts\python.exe -m twine check dist/*
    ```
 
-5. Commit the release prep.
+5. Run the install/launch smoke.
+
+   This creates a temporary virtual environment, installs the local package,
+   verifies package metadata matches `pyherdr.__version__`, and launches the
+   installed console script.
+
+   ```powershell
+   .\.venv\Scripts\python.exe tools\release_smoke.py
+   ```
+
+6. Commit the release prep.
 
    ```powershell
    git status --short
    git commit -m "Prepare vX.Y.Z release"
    ```
 
-6. Create and push the tag only after validation is green.
+7. Create and push the tag only after validation is green.
 
    ```powershell
    git tag -a vX.Y.Z -m "PyHerdr vX.Y.Z"
    git push github main vX.Y.Z
    ```
 
-7. Watch the publish workflow.
+8. Watch the publish workflow.
 
    The `.github/workflows/release.yml` workflow should build, run `twine check`,
    and publish to PyPI through Trusted Publishing.
 
-8. Verify the published package.
+9. Verify the published package.
 
    Check the PyPI project page, install in a clean environment, and run:
 

@@ -3,6 +3,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
+import pyherdr
 from pyherdr.config import load_config
 from tools.docs_site import check_docs_site
 
@@ -12,6 +13,7 @@ class ConfigTests(unittest.TestCase):
         project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
 
         self.assertEqual(project["name"], "pyherdr")
+        self.assertEqual(project["version"], pyherdr.__version__)
         self.assertIn("terminal-native", project["description"].lower())
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(project["scripts"]["pyherdr"], "pyherdr.cli:main")
@@ -62,6 +64,7 @@ class ConfigTests(unittest.TestCase):
 
         for required in ("version", "ruff check", "mypy", "unittest", "twine check", "git tag", "publish"):
             self.assertIn(required, checklist)
+        self.assertIn("tools\\release_smoke.py", checklist)
         self.assertIn(".github/workflows/release.yml", checklist)
         self.assertIn("abort conditions", checklist)
 
