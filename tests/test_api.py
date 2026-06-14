@@ -10,6 +10,23 @@ from pyherdr.models import AgentStatus, AppState
 from pyherdr.workspace_recents import load_workspace_recents, prune_workspace_recents, remove_workspace_recent
 
 
+def _assert_success_envelope(testcase: unittest.TestCase, response: dict, request_id: str, result_type: str) -> dict:
+    testcase.assertEqual(set(response), {"id", "result"})
+    testcase.assertEqual(response["id"], request_id)
+    result = response["result"]
+    testcase.assertEqual(result["type"], result_type)
+    return result
+
+
+def _assert_error_envelope(testcase: unittest.TestCase, response: dict, request_id: str, code: str) -> dict:
+    testcase.assertEqual(set(response), {"id", "error"})
+    testcase.assertEqual(response["id"], request_id)
+    error = response["error"]
+    testcase.assertEqual(error["code"], code)
+    testcase.assertIsInstance(error["message"], str)
+    return error
+
+
 class _FakeProcesses:
     def __init__(self) -> None:
         self.broadcasts: list[tuple[list[str], str]] = []
@@ -26,6 +43,11 @@ class _StartProcesses:
     def start(self, pane_id: str, command: str, cwd: str, *, env: dict[str, str] | None = None) -> bool:
         self.started.append((pane_id, command, cwd, dict(env or {})))
         return True
+
+
+class _SendTextFails:
+    def send_text(self, pane_id: str, text: str) -> None:
+        raise OSError(f"pipe closed for {pane_id}: {text}")
 
 
 class _CaptureProcesses:
@@ -76,6 +98,129 @@ class _ScrollProcesses:
 
 
 class ApiTests(unittest.TestCase):
+    def test_dispatch_success_response_envelope_is_stable(self):
+        state = AppState.bootstrap(cwd="C:/work")
+
+        response = dispatch(state, {"id": "ping-contract", "method": "ping", "params": {}})
+
+        result = _assert_success_envelope(self, response, "ping-contract", "pong")
+        self.assertEqual(result["server"], "pyherdr")
+
+    def test_dispatch_unknown_method_error_envelope_is_stable(self):
+        state = AppState.bootstrap(cwd="C:/work")
+
+        response = dispatch(state, {"id": "bad-method", "method": "missing.method", "params": {}})
+
+        error = _assert_error_envelope(self, response, "bad-method", "invalid_request")
+        self.assertIn("unknown method: missing.method", error["message"])
+
+    def test_dispatch_runtime_error_envelope_is_stable(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        pane = state.focused_workspace.focused_tab.focused_pane
+
+        response = dispatch(
+            state,
+            {"id": "send", "method": "pane.send_text", "params": {"pane_id": pane.id, "text": "ls"}},
+            _SendTextFails(),
+        )
+
+        error = _assert_error_envelope(self, response, "send", "runtime_error")
+        self.assertIn("pipe closed", error["message"])
+
+    def test_workspace_tab_and_pane_list_contract_fields_are_stable(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        workspace = state.focused_workspace
+        tab = workspace.focused_tab
+
+        workspace_result = _assert_success_envelope(
+            self,
+            dispatch(state, {"id": "workspaces", "method": "workspace.list", "params": {}}),
+            "workspaces",
+            "workspace_list",
+        )
+        self.assertEqual(set(workspace_result), {"type", "workspaces", "focused_workspace_id"})
+        self.assertEqual(workspace_result["focused_workspace_id"], workspace.id)
+        self.assertEqual(
+            {"workspace_id", "label", "cwd", "status", "focused_tab_id"},
+            set(workspace_result["workspaces"][0]),
+        )
+
+        tab_result = _assert_success_envelope(
+            self,
+            dispatch(state, {"id": "tabs", "method": "tab.list", "params": {"workspace_id": workspace.id}}),
+            "tabs",
+            "tab_list",
+        )
+        self.assertEqual(set(tab_result), {"type", "tabs", "focused_tab_id"})
+        self.assertEqual(tab_result["focused_tab_id"], tab.id)
+        self.assertEqual(
+            {"tab_id", "label", "status", "focused_pane_id", "pane_count"},
+            set(tab_result["tabs"][0]),
+        )
+
+        pane_result = _assert_success_envelope(
+            self,
+            dispatch(
+                state,
+                {"id": "panes", "method": "pane.list", "params": {"workspace_id": workspace.id, "tab_id": tab.id}},
+            ),
+            "panes",
+            "pane_list",
+        )
+        self.assertEqual(set(pane_result), {"type", "panes"})
+        self.assertEqual(
+            {
+                "pane_id",
+                "workspace_id",
+                "tab_id",
+                "title",
+                "cwd",
+                "location",
+                "remote_host",
+                "remote_cwd",
+                "display_cwd",
+                "command",
+                "agent",
+                "agent_status",
+                "custom_status",
+                "output_lines",
+            },
+            set(pane_result["panes"][0]),
+        )
+
+    def test_template_events_and_stats_contract_fields_are_stable(self):
+        state = AppState.bootstrap(cwd="C:/work")
+        state.focused_workspace.focused_tab.focused_pane.status = AgentStatus.WORKING
+
+        template_result = _assert_success_envelope(
+            self,
+            dispatch(state, {"id": "templates-contract", "method": "layout.template.list", "params": {}}),
+            "templates-contract",
+            "layout_template_list",
+        )
+        self.assertEqual(set(template_result), {"type", "templates"})
+        self.assertTrue(template_result["templates"])
+        self.assertEqual({"id", "label", "description", "pane_count"}, set(template_result["templates"][0]))
+
+        events_result = _assert_success_envelope(
+            self,
+            dispatch(state, {"id": "events-contract", "method": "events.snapshot", "params": {}}),
+            "events-contract",
+            "events_snapshot",
+        )
+        self.assertEqual(set(events_result), {"type", "events", "event_count"})
+        self.assertEqual(events_result["event_count"], len(events_result["events"]))
+
+        stats_result = _assert_success_envelope(
+            self,
+            dispatch(state, {"id": "stats-contract", "method": "stats.get", "params": {}}),
+            "stats-contract",
+            "stats",
+        )
+        self.assertEqual(set(stats_result), {"type", "available", "stats"})
+        self.assertIsInstance(stats_result["available"], bool)
+        self.assertEqual(stats_result["stats"], {})
+
     def test_ping(self):
         state = AppState.bootstrap(cwd="C:/work")
 
