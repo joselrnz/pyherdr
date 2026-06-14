@@ -218,6 +218,16 @@ scrollback, and restore the saved session state.
 python -m tools.headless_scenario --json
 ```
 
+### Run the plugin extension scenario
+
+The plugin scenario proves the extension path with trusted local example
+plugins: launcher records for Walter SSH, Ollama, Codex, and Claude Code;
+detector status updates; a theme plugin; and a recording exporter.
+
+```bash
+python -m tools.plugin_scenario --json
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:

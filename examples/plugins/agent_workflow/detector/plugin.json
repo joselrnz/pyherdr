@@ -1,0 +1,8 @@
+{
+  "name": "pyherdr-plugin-agent",
+  "version": "1.0.0",
+  "kind": "detector",
+  "entrypoint": "detector.py",
+  "description": "Detects deterministic plugin scenario agent states.",
+  "aliases": ["plugin-agent"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "pyherdr-markdown-exporter",
+  "version": "1.0.0",
+  "kind": "exporter",
+  "entrypoint": "exporter.py",
+  "description": "Exports a compact Markdown session summary."
+}

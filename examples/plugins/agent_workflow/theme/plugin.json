@@ -1,0 +1,7 @@
+{
+  "name": "pyherdr-ops-theme",
+  "version": "1.0.0",
+  "kind": "theme",
+  "entrypoint": "theme.py",
+  "description": "Example operational theme distributed outside core."
+}

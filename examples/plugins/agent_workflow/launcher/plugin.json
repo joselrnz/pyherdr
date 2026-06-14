@@ -1,0 +1,7 @@
+{
+  "name": "pyherdr-ai-launchers",
+  "version": "1.0.0",
+  "kind": "launcher",
+  "entrypoint": "launcher.py",
+  "description": "Adds Walter, Ollama, Codex, and Claude Code launch commands."
+}
