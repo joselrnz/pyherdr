@@ -14,6 +14,7 @@ from pyherdr.config import (
     UiConfig,
     WorkflowConfig,
 )
+from pyherdr.config.theme import CATPPUCCIN_MOCHA
 from pyherdr.launchers import LauncherPreset
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
@@ -30,6 +31,7 @@ from pyherdr.presentation.tui import (
     PyHerdrTui,
     RenameScreen,
     ShellPickerScreen,
+    StatsScreen,
     ThemeScreen,
     UrlPickerScreen,
     WorkflowScreen,
@@ -1655,6 +1657,36 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("appearance settings", _help_text(app._palette).plain)
         labels = [label for label, _action, _custom in app._palette_entries()]
         self.assertIn("Theme and appearance settings...", labels)
+
+    def test_stats_screen_renders_resource_fallback_errors(self):
+        screen = StatsScreen(
+            "resource monitor",
+            FakeClient(),
+            CATPPUCCIN_MOCHA,
+            {"1-1": "main · shell · pane"},
+            None,
+        )
+
+        body = screen._render_stats(
+            {
+                "available": True,
+                "stats": {
+                    "1-1": {
+                        "pid": 123,
+                        "cpu_percent": 0.0,
+                        "rss_bytes": 0,
+                        "num_procs": 0,
+                        "procs": [],
+                        "error": "process unavailable or permission denied",
+                        "warnings": ["could not inspect child processes: PermissionError"],
+                    }
+                },
+            }
+        ).plain
+
+        self.assertIn("main · shell · pane", body)
+        self.assertIn("process unavailable or permission denied", body)
+        self.assertIn("could not inspect child processes: PermissionError", body)
 
     async def test_workflow_view_opens_graph_and_log_screen(self):
         event = new_event(

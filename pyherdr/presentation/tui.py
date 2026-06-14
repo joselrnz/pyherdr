@@ -610,6 +610,10 @@ class StatsScreen(ModalScreen[None]):
             text.append(f"   CPU {stat.get('cpu_percent', 0.0):.1f}%", style=palette.green)
             text.append(f"   RAM {_fmt_mb(int(stat.get('rss_bytes', 0)))}", style=palette.blue)
             text.append(f"   (pid {stat.get('pid', '?')})\n", style=palette.overlay0)
+            if stat.get("error"):
+                text.append(f"    {stat['error']}\n", style=palette.red)
+            for warning in stat.get("warnings", []) or []:
+                text.append(f"    {warning}\n", style=palette.yellow)
             procs = stat.get("procs", []) or []
             for proc in procs[:8]:
                 text.append(f"    {float(proc.get('cpu_percent', 0.0)):>5.1f}%  ", style=palette.green)

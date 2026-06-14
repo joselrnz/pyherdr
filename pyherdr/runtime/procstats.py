@@ -63,32 +63,50 @@ class ProcSampler:
             self._procs[pid] = proc
         return proc
 
+    def _empty_stat(self, root_pid: int, message: str, warnings: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "pid": root_pid,
+            "cpu_percent": 0.0,
+            "rss_bytes": 0,
+            "num_procs": 0,
+            "procs": [],
+            "error": message,
+            "warnings": warnings or [],
+        }
+
     def sample(self, pane_pids: dict[str, int]) -> None:
         """Refresh the cached snapshot for the given ``pane id -> root pid`` map."""
         if not AVAILABLE:
+            self._snapshot = {}
             return
         snapshot: dict[str, dict[str, Any]] = {}
         seen: set[int] = set()
         for pane_id, root_pid in pane_pids.items():
+            warnings: list[str] = []
+            failures = 0
             root = self._handle(root_pid)
             if root is None:
+                snapshot[pane_id] = self._empty_stat(root_pid, "process unavailable or permission denied")
                 continue
             try:
                 tree = [root, *root.children(recursive=True)]
-            except Exception:
+            except Exception as exc:
                 tree = [root]
+                warnings.append(f"could not inspect child processes: {type(exc).__name__}")
             procs: list[dict[str, Any]] = []
             cpu_total = 0.0
             rss_total = 0
             for member in tree:
                 handle = self._handle(member.pid)
                 if handle is None:
+                    failures += 1
                     continue
                 try:
                     cpu = handle.cpu_percent(None)
                     rss = int(handle.memory_info().rss)
                     name = handle.name()
                 except Exception:
+                    failures += 1
                     continue
                 seen.add(member.pid)
                 cpu_total += cpu
@@ -109,7 +127,12 @@ class ProcSampler:
                 "rss_bytes": rss_total,
                 "num_procs": len(procs),
                 "procs": procs,
+                "warnings": warnings,
             }
+            if failures and not procs:
+                snapshot[pane_id]["error"] = "process inspection failed or permission denied"
+            elif failures:
+                snapshot[pane_id]["warnings"].append(f"{failures} process(es) could not be inspected")
         # Drop handles for processes that have gone away, to bound memory.
         self._procs = {pid: proc for pid, proc in self._procs.items() if pid in seen}
         self._snapshot = snapshot
