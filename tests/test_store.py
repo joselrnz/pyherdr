@@ -91,6 +91,59 @@ class StoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported PyHerdr state schema version"):
                 load_state(path)
 
+    def test_load_state_recovers_corrupt_json_with_backup_and_note(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "session.json"
+            path.write_text("{broken json", encoding="utf-8")
+
+            restored = load_state(path)
+            backups = list(Path(temp_dir).glob("session.json.corrupt-*"))
+            note = Path(temp_dir) / "session.json.repair.txt"
+
+            self.assertTrue(restored.workspaces)
+            self.assertFalse(path.exists())
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "{broken json")
+            self.assertIn("PyHerdr could not load the saved session state.", note.read_text(encoding="utf-8"))
+
+    def test_load_state_recovers_validation_failure_with_backup_and_note(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "session.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "workspaces": [
+                            {
+                                "id": "ws",
+                                "label": "main",
+                                "cwd": "C:/work",
+                                "tabs": [
+                                    {
+                                        "id": "tab",
+                                        "label": "shell",
+                                        "panes": [
+                                            {
+                                                "id": "pane",
+                                                "title": "pane",
+                                                "cwd": "C:/work",
+                                                "status": "not-a-real-status",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            restored = load_state(path)
+            backups = list(Path(temp_dir).glob("session.json.corrupt-*"))
+
+            self.assertTrue(restored.workspaces)
+            self.assertEqual(len(backups), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

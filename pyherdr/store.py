@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
+
+from pydantic import ValidationError
 
 from .models import AppState
 from .session import session_runtime_dir
@@ -24,6 +27,11 @@ PANE_KEYS = {
     "status",
     "custom_status",
 }
+RECOVERY_NOTE_SUFFIX = ".repair.txt"
+
+
+class UnsupportedStateSchemaError(ValueError):
+    """Raised when a state file was written by a newer PyHerdr schema."""
 
 
 def default_state_path() -> Path:
@@ -44,7 +52,15 @@ def load_state(path: Path | None = None) -> AppState:
     target = path or default_state_path()
     if not target.exists():
         return AppState.bootstrap()
-    state = from_dict(json.loads(target.read_text(encoding="utf-8")))
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("PyHerdr state file root must be a JSON object")
+        state = from_dict(payload)
+    except UnsupportedStateSchemaError:
+        raise
+    except (json.JSONDecodeError, OSError, TypeError, ValueError, ValidationError) as exc:
+        return _recover_corrupt_state(target, exc)
     if not state.workspaces:
         # A saved-but-empty session (e.g. last workspace closed) bootstraps a
         # default so the server never serves an unusable empty state.
@@ -72,7 +88,7 @@ def migrate_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if "schema_version" in payload:
         version = int(payload.get("schema_version") or 0)
         if version > STATE_SCHEMA_VERSION:
-            raise ValueError(f"unsupported PyHerdr state schema version: {version}")
+            raise UnsupportedStateSchemaError(f"unsupported PyHerdr state schema version: {version}")
         state = payload.get("state")
         if not isinstance(state, dict):
             raise ValueError("versioned PyHerdr state file is missing a state object")
@@ -135,3 +151,39 @@ def _migrate_pane(payload: dict[str, Any], cwd: str) -> dict[str, Any]:
     pane.setdefault("status", "idle")
     pane.setdefault("custom_status", "")
     return {key: pane[key] for key in PANE_KEYS if key in pane}
+
+
+def _recover_corrupt_state(path: Path, error: Exception) -> AppState:
+    backup = _next_recovery_backup_path(path)
+    note = path.with_name(f"{path.name}{RECOVERY_NOTE_SUFFIX}")
+    try:
+        path.replace(backup)
+        note.write_text(
+            "\n".join(
+                [
+                    "PyHerdr could not load the saved session state.",
+                    f"Original state file: {path}",
+                    f"Preserved corrupt copy: {backup}",
+                    f"Reason: {type(error).__name__}: {error}",
+                    "PyHerdr started a fresh session so the app can continue.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        # If the recovery file cannot be written, still keep startup usable.
+        pass
+    return AppState.bootstrap()
+
+
+def _next_recovery_backup_path(path: Path) -> Path:
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    base = path.with_name(f"{path.name}.corrupt-{timestamp}")
+    if not base.exists():
+        return base
+    for index in range(1, 1000):
+        candidate = path.with_name(f"{path.name}.corrupt-{timestamp}-{index}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(f"{path.name}.corrupt-{timestamp}-{time.monotonic_ns()}")
