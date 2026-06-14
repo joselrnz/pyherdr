@@ -164,6 +164,16 @@ python -m pyherdr demo-gif --output pyherdr-demo.gif
 python -m pyherdr demo-gif --views main,workflow,fanout,workspace-search --output pyherdr-demo.gif
 ```
 
+### Run the daily-driver scenario
+
+The daily-driver scenario creates a temporary git worktree, simulates local
+agent panes, verifies visible agent status, saves the session, and reloads it as
+a detach/reattach check.
+
+```bash
+python -m tools.daily_driver_scenario --json
+```
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:

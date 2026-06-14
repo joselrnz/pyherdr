@@ -27,6 +27,7 @@ It focuses on product capabilities instead of implementation trackers.
 - **API Coverage** — API contracts have regression tests.
 - **Detector Coverage** — agent detectors have transcript coverage.
 - **Release Smoke** — release candidate can install and launch.
+- **Daily Driver Scenario** — one scripted scenario exercises daily agent work.
 - **Documentation Truth Pass** — public docs do not promise missing behavior.
 
 ## Next
@@ -46,7 +47,6 @@ It focuses on product capabilities instead of implementation trackers.
 - **Project Config** — .pyherdr.toml or equivalent config controls project commands.
 - **Issue Templates** — users can file useful bugs and feature requests.
 - **Security Policy** — users know how to report token/security issues.
-- **Daily Driver Scenario** — one scripted scenario exercises daily agent work.
 - **Remote Scenario** — one scenario proves remote workspace story.
 - **Headless Scenario** — one scenario proves CI/headless story.
 - **Plugin Scenario** — one scenario proves extension story.
