@@ -136,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--view",
         choices=[
             "main",
+            "agent-ux",
             "workflow",
             "fanout",
             "workspace-picker",

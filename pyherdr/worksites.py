@@ -47,6 +47,7 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "WS-100",
             "WS-103",
             "WS-104",
+            "WS-105",
             "WS-110",
         ),
     ),
@@ -96,6 +97,7 @@ PUBLIC_ROADMAP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 PUBLIC_ROADMAP_TITLES = {
     "WS-104": "Multiplexer Scenario",
+    "WS-105": "Polished Agent UX Scenario",
 }
 
 

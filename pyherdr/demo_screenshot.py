@@ -141,6 +141,85 @@ This screenshot is a reproducible demo render.
 """,
 }
 
+AGENT_UX_DEMO_STATE: dict[str, Any] = {
+    "focused_workspace_id": "ws-agent-ux",
+    "workspaces": [
+        {
+            "id": "ws-agent-ux",
+            "label": "agent-ux / polish",
+            "cwd": ".",
+            "focused_tab_id": "tab-agent-ux",
+            "tabs": [
+                {
+                    "id": "tab-agent-ux",
+                    "label": "agents",
+                    "focused_pane_id": "pane-claude",
+                    "panes": [
+                        {
+                            "id": "pane-claude",
+                            "title": "Claude Code",
+                            "status": "blocked",
+                            "running": True,
+                            "agent": "claude",
+                        },
+                        {
+                            "id": "pane-codex",
+                            "title": "Codex",
+                            "status": "working",
+                            "running": True,
+                            "agent": "codex",
+                        },
+                        {
+                            "id": "pane-aider",
+                            "title": "Aider",
+                            "status": "done",
+                            "running": True,
+                            "agent": "aider",
+                        },
+                    ],
+                    "layout": {
+                        "root": {
+                            "kind": "split",
+                            "direction": "horizontal",
+                            "ratio": 0.5,
+                            "first": {"kind": "pane", "pane_id": "pane-claude"},
+                            "second": {
+                                "kind": "split",
+                                "direction": "vertical",
+                                "ratio": 0.5,
+                                "first": {"kind": "pane", "pane_id": "pane-codex"},
+                                "second": {"kind": "pane", "pane_id": "pane-aider"},
+                            },
+                        },
+                        "focus": "pane-claude",
+                    },
+                }
+            ],
+        }
+    ],
+}
+
+AGENT_UX_DEMO_OUTPUTS = {
+    "pane-claude": """$ claude
+Claude Code is waiting for approval.
+
+Status: blocked
+Action: review the proposed command.
+""",
+    "pane-codex": """$ codex
+Codex is editing the next slice.
+
+Status: working
+Current file: tools/agent_ux_scenario.py
+""",
+    "pane-aider": """$ aider
+Aider patch is ready.
+
+Status: done
+Next: inspect diff and commit.
+""",
+}
+
 DEMO_WORKFLOW_EVENTS = [
     new_event(
         "api.request",
@@ -198,6 +277,7 @@ DEMO_WORKFLOW_EVENTS = [
 DEMO_PICKER_ROOT = "C:/Users/josel/github/pyherdr"
 DEMO_SCREENSHOT_VIEWS = (
     "main",
+    "agent-ux",
     "workflow",
     "fanout",
     "workspace-picker",
@@ -232,8 +312,17 @@ class DemoDirPickerScreen(DirPickerScreen):
 class DemoScreenshotClient:
     """PaneClient implementation that feeds the TUI a deterministic demo state."""
 
+    def __init__(
+        self,
+        *,
+        state: dict[str, Any] | None = None,
+        outputs: dict[str, str] | None = None,
+    ) -> None:
+        self._state = state or DEMO_STATE
+        self._outputs = outputs or DEMO_OUTPUTS
+
     def state(self) -> dict[str, Any]:
-        return DEMO_STATE
+        return self._state
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -246,7 +335,7 @@ class DemoScreenshotClient:
         }
 
     def pane_read(self, pane_id: str, lines: int = 200, styled: bool = False, cursor: bool = False) -> str:
-        return DEMO_OUTPUTS.get(pane_id, "")
+        return self._outputs.get(pane_id, "")
 
     def pane_resize(self, pane_id: str, rows: int, cols: int) -> dict[str, Any]:
         return {"result": {"type": "pane_resize", "pane_id": pane_id, "rows": rows, "cols": cols}}
@@ -333,7 +422,7 @@ class DemoScreenshotClient:
     ) -> dict[str, Any]:
         selector = targets[0] if targets else ""
         records = []
-        for workspace in DEMO_STATE["workspaces"]:
+        for workspace in self._state["workspaces"]:
             for tab in workspace.get("tabs", []):
                 for pane in tab.get("panes", []):
                     matches = (
@@ -448,7 +537,12 @@ def _prepare_workspace_search_fixture(root: Path, view: str) -> list[SearchRoot]
 
 async def _render(path: Path, width: int, height: int, view: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    app = PyHerdrTui(client=DemoScreenshotClient(), poll_interval=100)
+    client = (
+        DemoScreenshotClient(state=AGENT_UX_DEMO_STATE, outputs=AGENT_UX_DEMO_OUTPUTS)
+        if view == "agent-ux"
+        else DemoScreenshotClient()
+    )
+    app = PyHerdrTui(client=client, poll_interval=100)
     async with app.run_test(size=(width, height)) as pilot:
         await pilot.pause(0.5)
         if view == "workflow":

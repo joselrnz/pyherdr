@@ -24,6 +24,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "fanout")
 
+    def test_demo_screenshot_accepts_agent_ux_view(self):
+        args = build_parser().parse_args(["demo-screenshot", "--view", "agent-ux"])
+
+        self.assertEqual(args.command, "demo-screenshot")
+        self.assertEqual(args.view, "agent-ux")
+
     def test_demo_screenshot_accepts_workspace_picker_view(self):
         args = build_parser().parse_args(["demo-screenshot", "--view", "workspace-picker"])
 
@@ -87,6 +93,21 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("^W ws", plain)
         self.assertIn("branch main", plain)
         self.assertIn("dirty", plain)
+
+    def test_demo_screenshot_renders_agent_ux_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(Path(tmp) / "agent-ux.svg", width=100, height=30, view="agent-ux")
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("agent-ux / polish", plain)
+        self.assertIn("Claude Code", plain)
+        self.assertIn("Codex", plain)
+        self.assertIn("Aider", plain)
+        self.assertIn("blocked", plain)
 
     def test_demo_screenshot_renders_workspace_search_view(self):
         import html

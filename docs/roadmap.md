@@ -29,6 +29,7 @@ It focuses on product capabilities instead of implementation trackers.
 - **Release Smoke** — release candidate can install and launch.
 - **Daily Driver Scenario** — one scripted scenario exercises daily agent work.
 - **Multiplexer Scenario** — one scenario proves multiplexer fundamentals.
+- **Polished Agent UX Scenario** — one scenario proves polished agent UX.
 - **Documentation Truth Pass** — public docs do not promise missing behavior.
 
 ## Next

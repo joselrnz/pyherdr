@@ -137,6 +137,7 @@ text is seeded demo data; this command does not launch live agents.
 
 ```bash
 python -m pyherdr demo-screenshot --output pyherdr-demo.svg
+python -m pyherdr demo-screenshot --view agent-ux --output pyherdr-agent-ux.svg
 python -m pyherdr demo-screenshot --view workflow --output pyherdr-workflow.svg
 python -m pyherdr demo-screenshot --view fanout --output pyherdr-fanout.svg
 python -m pyherdr demo-screenshot --view workspace-picker --output pyherdr-picker.svg
@@ -182,6 +183,17 @@ fresh tab.
 
 ```bash
 python -m tools.zmux_scenario --json
+```
+
+### Run the polished agent UX scenario
+
+The polished agent UX scenario proves the agent-facing product loop without
+starting live agent CLIs: built-in launcher presets, blocked/working/done agent
+status, attention focus, in-app toast delivery, and a reproducible TUI
+screenshot.
+
+```bash
+python -m tools.agent_ux_scenario --json
 ```
 
 ## ⌨️ Keybindings
