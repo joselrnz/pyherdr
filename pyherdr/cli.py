@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_notification(args)
     if args.command == "workflow":
         return run_workflow(args)
+    if args.command == "roadmap":
+        return run_roadmap(args)
     if args.command == "schedule":
         return run_schedule(args)
     if args.command == "headless":
@@ -266,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_graph.add_argument("--limit", type=int, default=100)
     workflow_graph.add_argument("--format", choices=["json", "mermaid", "svg"], default="json")
     workflow_graph.add_argument("--output", help="write graph to a file instead of stdout")
+
+    roadmap = sub.add_parser("roadmap", help="internal roadmap/worksite tracker commands")
+    roadmap_sub = roadmap.add_subparsers(dest="roadmap_command", required=True)
+    roadmap_check = roadmap_sub.add_parser("check", help="validate worksite tracking metadata")
+    roadmap_check.add_argument("--plan", default="MEGA_PLAN.md", help="plan markdown file to inspect")
+    roadmap_check.add_argument("--json", action="store_true", help="print machine-readable tracker output")
 
     schedule = sub.add_parser("schedule", help="cron-scheduled pane commands")
     schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
@@ -673,6 +681,33 @@ def run_workflow(args) -> int:
             print(output)
         return 0
     return 2
+
+
+def run_roadmap(args) -> int:
+    from .worksites import check_worksite_tracking, parse_worksites, worksite_summary
+
+    if args.roadmap_command != "check":
+        return 2
+    plan = Path(args.plan)
+    worksites = parse_worksites(plan.read_text(encoding="utf-8"))
+    issues = check_worksite_tracking(worksites)
+    summary = worksite_summary(worksites)
+    payload = {
+        "summary": summary,
+        "issues": [issue.to_dict() for issue in issues],
+        "worksites": [worksite.to_dict() for worksite in worksites],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(
+            "worksites: "
+            f"{summary['total']} total, {summary['done']} done, {summary['active']} active, "
+            f"{summary['open']} open, {summary['blocked']} blocked, {summary['issues']} issue(s)"
+        )
+        for issue in issues:
+            print(f"{issue.worksite_id}: {issue.message}")
+    return 1 if issues else 0
 
 
 def run_session(args) -> int:
