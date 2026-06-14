@@ -298,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     server_sub.add_parser("start")
     server_sub.add_parser("stop")
     server_sub.add_parser("restart")
+    server_sub.add_parser("rotate-token")
     server_sub.add_parser("status")
     server_run = server_sub.add_parser("run")
     server_run.add_argument("--host", default="127.0.0.1")
@@ -1200,6 +1201,18 @@ def run_server(args) -> int:
         stopped = stop_running()
         info = start_background()
         print(json.dumps({"restarted": True, "stopped": stopped, "server": _public_server_info(info)}, indent=2))
+        return 0
+    if args.server_command == "rotate-token":
+        info = start_background()
+        response = request(info, {"id": "server_rotate_token", "method": "server.rotate_token", "params": {}})
+        if "error" in response:
+            return print_response(response)
+        refreshed = read_server_info()
+        payload = {
+            "type": response.get("result", {}).get("type", "server_token_rotated"),
+            "server": _public_server_info(refreshed or info),
+        }
+        print(json.dumps(payload, indent=2))
         return 0
     if args.server_command == "status":
         info = read_server_info()

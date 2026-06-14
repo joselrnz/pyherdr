@@ -1,8 +1,22 @@
+import os
+import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
 from pyherdr.presentation.client import ServerClient
-from pyherdr.server import RequestHandler, ServerInfo, mutates_state, quiet_request, skips_state_lock
+from pyherdr.server import (
+    PyHerdrServer,
+    RequestHandler,
+    ServerInfo,
+    mutates_state,
+    quiet_request,
+    read_server_info,
+    request,
+    server_info_path,
+    skips_state_lock,
+    write_server_info,
+)
 
 
 class MutatesStateTests(unittest.TestCase):
@@ -105,6 +119,45 @@ class RequestHandlerDisconnectTests(unittest.TestCase):
         self.assertTrue(handler._write({"id": "request", "result": {"type": "ok"}}))
         sent = handler.request.sendall.call_args.args[0]
         self.assertTrue(sent.endswith(b"\n"))
+
+
+class TokenRotationTests(unittest.TestCase):
+    def test_rotate_token_rejects_old_token_and_accepts_new_token(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                "PYHERDR_STATE_PATH": os.path.join(temp_dir, "session.json"),
+                "PYHERDR_RUNTIME_DIR": os.path.join(temp_dir, "run"),
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with PyHerdrServer(("127.0.0.1", 0), token="old-token") as server:
+                    host, port = server.server_address
+                    write_server_info(
+                        ServerInfo(str(host), int(port), os.getpid(), server.state_path.as_posix(), "old-token")
+                    )
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        old = read_server_info()
+                        self.assertIsNotNone(old)
+                        rotate = request(old, {"id": "rotate", "method": "server.rotate_token", "params": {}})
+                        self.assertEqual(rotate["result"]["type"], "server_token_rotated")
+
+                        current = read_server_info()
+                        self.assertIsNotNone(current)
+                        assert current is not None
+                        self.assertNotEqual(current.token, "old-token")
+
+                        rejected = request(old, {"id": "old", "method": "ping", "params": {}})
+                        self.assertEqual(rejected["error"]["code"], "unauthorized")
+
+                        accepted = request(current, {"id": "new", "method": "ping", "params": {}})
+                        self.assertEqual(accepted["result"]["type"], "pong")
+                    finally:
+                        server.shutdown()
+                        server.server_close()
+                        thread.join(timeout=5)
+                        if server_info_path().exists():
+                            server_info_path().unlink()
 
 
 if __name__ == "__main__":

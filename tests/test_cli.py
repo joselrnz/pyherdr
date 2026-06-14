@@ -954,6 +954,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "server")
         self.assertEqual(args.server_command, "restart")
 
+    def test_server_rotate_token_parses(self):
+        args = build_parser().parse_args(["server", "rotate-token"])
+
+        self.assertEqual(args.command, "server")
+        self.assertEqual(args.server_command, "rotate-token")
+
     def test_server_restart_stops_then_starts_and_redacts_token(self):
         from pyherdr.cli import run_server
         from pyherdr.server import ServerInfo
@@ -977,6 +983,35 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("secret-token", stdout.getvalue())
         stop.assert_called_once_with()
         start.assert_called_once_with()
+
+    def test_server_rotate_token_dispatches_and_redacts_token(self):
+        from pyherdr.cli import run_server
+        from pyherdr.server import ServerInfo
+
+        old = ServerInfo("127.0.0.1", 4567, 123, "state.json", "old-token")
+        new = ServerInfo("127.0.0.1", 4567, 123, "state.json", "new-token")
+        args = build_parser().parse_args(["server", "rotate-token"])
+
+        stdout = StringIO()
+        with (
+            patch("pyherdr.cli.start_background", return_value=old) as start,
+            patch(
+                "pyherdr.cli.request",
+                return_value={"result": {"type": "server_token_rotated", "state_path": "state.json"}},
+            ) as send,
+            patch("pyherdr.cli.read_server_info", return_value=new),
+            redirect_stdout(stdout),
+        ):
+            exit_code = run_server(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["type"], "server_token_rotated")
+        self.assertEqual(payload["server"]["port"], 4567)
+        self.assertNotIn("old-token", stdout.getvalue())
+        self.assertNotIn("new-token", stdout.getvalue())
+        start.assert_called_once_with()
+        self.assertEqual(send.call_args.args[1]["method"], "server.rotate_token")
 
     def test_server_status_reports_stale_info_and_repair_hint(self):
         from pyherdr.cli import run_server

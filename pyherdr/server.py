@@ -143,6 +143,43 @@ class RequestHandler(BaseRequestHandler):
             threading.Thread(target=server.shutdown, daemon=True).start()
             return
 
+        if request.get("method") == "server.rotate_token":
+            new_token = secrets.token_hex(32)
+            with server.lock:
+                server.token = new_token
+                host = server.server_address[0]
+                port = server.server_address[1]
+                write_server_info(
+                    ServerInfo(
+                        host=str(host),
+                        port=int(port),
+                        pid=os.getpid(),
+                        state_path=str(server.state_path),
+                        token=new_token,
+                    )
+                )
+            self._write(
+                {
+                    "id": request_id,
+                    "result": {
+                        "type": "server_token_rotated",
+                        "host": str(host),
+                        "port": int(port),
+                        "pid": os.getpid(),
+                        "state_path": str(server.state_path),
+                    },
+                }
+            )
+            _record_workflow_event(
+                "api.response",
+                message="server.rotate_token",
+                source="server",
+                target="server.rotate_token",
+                status="ok",
+                details={"id": request_id},
+            )
+            return
+
         if skips_state_lock(method):
             response = dispatch(server.state, request, server.processes)
         else:
