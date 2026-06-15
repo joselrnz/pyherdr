@@ -7,7 +7,15 @@ from typing import Any
 
 from textual.widgets import Input
 
-from .presentation.tui import Activated, DirPickerScreen, DirRepoMetadata, FanoutScreen, PyHerdrTui, WorkflowScreen
+from .presentation.tui import (
+    Activated,
+    DirPickerScreen,
+    DirRepoMetadata,
+    FanoutScreen,
+    PerformanceScreen,
+    PyHerdrTui,
+    WorkflowScreen,
+)
 from .workflow import new_event
 from .workspace_search import SearchRoot
 
@@ -279,6 +287,7 @@ DEMO_SCREENSHOT_VIEWS = (
     "main",
     "agent-ux",
     "workflow",
+    "performance",
     "fanout",
     "workspace-picker",
     "workspace-search",
@@ -320,17 +329,74 @@ class DemoScreenshotClient:
     ) -> None:
         self._state = state or DEMO_STATE
         self._outputs = outputs or DEMO_OUTPUTS
+        self._stats_calls = 0
 
     def state(self) -> dict[str, Any]:
         return self._state
 
     def stats(self) -> dict[str, Any]:
+        tick = self._stats_calls
+        self._stats_calls += 1
+        loop_cpu = [3.2, 4.1, 2.8, 3.6, 5.0, 3.4][tick % 6]
+        ci_cpu = [0.4, 0.7, 0.2, 0.5, 0.3, 0.6][tick % 6]
+        loop_rss = (210 + (tick % 4) * 8) * 1024 * 1024
         return {
             "available": True,
             "stats": {
-                "pane-loop": {"cpu_percent": 3.2, "memory_mb": 210.0},
-                "pane-ci": {"cpu_percent": 0.0, "memory_mb": 32.0},
-                "pane-tests": {"cpu_percent": 0.0, "memory_mb": 48.0},
+                "pane-loop": {
+                    "pid": 101,
+                    "cpu_percent": loop_cpu,
+                    "rss_bytes": loop_rss,
+                    "num_procs": 3,
+                    "output_lines_per_second": 452,
+                    "procs": [],
+                    "warnings": [],
+                },
+                "pane-ci": {
+                    "pid": 102,
+                    "cpu_percent": ci_cpu,
+                    "rss_bytes": 32 * 1024 * 1024,
+                    "num_procs": 1,
+                    "output_lines_per_second": 98,
+                    "procs": [],
+                    "warnings": [],
+                },
+                "pane-tests": {
+                    "pid": 103,
+                    "cpu_percent": 0.0,
+                    "rss_bytes": 48 * 1024 * 1024,
+                    "num_procs": 2,
+                    "output_lines_per_second": 76,
+                    "procs": [],
+                    "warnings": [],
+                },
+                "pane-plan": {
+                    "pid": 104,
+                    "cpu_percent": 0.0,
+                    "rss_bytes": 64 * 1024 * 1024,
+                    "num_procs": 1,
+                    "output_lines_per_second": 24,
+                    "procs": [],
+                    "warnings": [],
+                },
+                "pane-log": {
+                    "pid": 105,
+                    "cpu_percent": 0.0,
+                    "rss_bytes": 28 * 1024 * 1024,
+                    "num_procs": 1,
+                    "output_lines_per_second": 12,
+                    "procs": [],
+                    "warnings": [],
+                },
+                "pane-review": {
+                    "pid": 106,
+                    "cpu_percent": 0.0,
+                    "rss_bytes": 72 * 1024 * 1024,
+                    "num_procs": 2,
+                    "output_lines_per_second": 9,
+                    "procs": [],
+                    "warnings": [],
+                },
             },
         }
 
@@ -548,6 +614,13 @@ async def _render(path: Path, width: int, height: int, view: str) -> Path:
         if view == "workflow":
             app.push_screen(WorkflowScreen(DEMO_WORKFLOW_EVENTS, app._palette))
             await pilot.pause(0.5)
+        elif view == "performance":
+            screen = PerformanceScreen(client, app._palette, interval=0.1)
+            app.push_screen(screen)
+            await pilot.pause(0.2)
+            for _ in range(28):
+                screen._refresh()
+            await pilot.pause(0.2)
         elif view == "fanout":
             app._open_fanout_picker()
             await pilot.pause(0.5)

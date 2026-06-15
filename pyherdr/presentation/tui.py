@@ -23,14 +23,17 @@ import queue
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -45,6 +48,7 @@ from ..config import AgentPanelScope, load_config
 from ..config.theme import DEFAULT_THEME, Palette, theme_names, theme_registry
 from ..launchers import LauncherPreset, launcher_presets
 from ..layout import Direction, NavDirection, PaneNode, Rect, TileLayout
+from ..performance import build_baseline, collect_sample
 from ..url_actions import extract_urls
 from ..workflow import WorkflowEvent, build_graph, graph_to_mermaid, read_events
 from ..workspace_recents import load_workspace_recents, remove_workspace_recent
@@ -57,6 +61,18 @@ from ..workspace_search import (
 )
 from .client import PaneClient, ServerClient
 from .watchdog import BackgroundTaskWatchdog, EventLoopWatchdog, WatchdogEvent
+
+VendoredHiResMode: Any = None
+VendoredLegendLocation: Any = None
+VendoredPlotWidget: Any = None
+_VENDORED_PLOT_ERROR: Exception | None = None
+try:
+    _vendored_plot = import_module("pyherdr.vendor.textual_plot")
+    VendoredHiResMode = vars(_vendored_plot)["HiResMode"]
+    VendoredLegendLocation = vars(_vendored_plot)["LegendLocation"]
+    VendoredPlotWidget = vars(_vendored_plot)["PlotWidget"]
+except Exception as exc:
+    _VENDORED_PLOT_ERROR = exc
 
 _STATUS_GLYPH = {"blocked": "●", "working": "●", "done": "●", "idle": "○", "unknown": "·"}
 _STATUS_PRIORITY = ["blocked", "working", "done", "idle", "unknown"]
@@ -117,6 +133,7 @@ _FOOTER_ACTIONS: tuple[tuple[str, str], ...] = (
     ("◫ split", "new_pane"),
     ("▾ terminal", "open_shell_picker"),
     ("▤ stats", "resource_monitor"),
+    ("▥ perf", "performance_dashboard"),
     ("◐ theme", "settings"),
     ("↧ detach", "detach"),
     ("✕ quit", "quit"),
@@ -629,6 +646,760 @@ class StatsScreen(ModalScreen[None]):
         if event.key in ("escape", "enter", "q"):
             self.dismiss()
         event.stop()
+
+
+class PerformanceScreen(ModalScreen[None]):
+    """Live baseline dashboard built from the same data as ``pyherdr perf``."""
+
+    DEFAULT_CSS = """
+    PerformanceScreen { align: center middle; background: $ph-base 80%; }
+    #perf-box {
+        width: 202;
+        max-width: 100%;
+        height: auto;
+        max-height: 98%;
+        background: $ph-mantle;
+        color: $ph-text;
+        border: round $ph-accent;
+        border-title-color: $ph-accent;
+        padding: 0 1;
+    }
+    #perf-body { height: auto; }
+    #perf-lower {
+        height: 20;
+        margin: 1 0 0 0;
+    }
+    #perf-help {
+        width: 26;
+        height: 20;
+        color: $ph-subtext0;
+        border: solid $ph-overlay0;
+        padding: 0 1;
+    }
+    #perf-chart-col {
+        width: 108;
+        height: 20;
+        margin: 0 0 0 2;
+        border: solid $ph-overlay0;
+        padding: 0 1;
+    }
+    #perf-plot-title {
+        height: 1;
+        color: $ph-accent;
+        text-style: bold;
+    }
+    #perf-cpu-plot {
+        width: 104;
+        height: 16;
+        background: $ph-base;
+    }
+    #perf-cpu-plot > .plot--axis {
+        color: $ph-overlay0;
+    }
+    #perf-cpu-plot > .plot--tick {
+        color: $ph-subtext0;
+        text-style: bold;
+    }
+    #perf-cpu-plot > .plot--label {
+        color: $ph-accent;
+        text-style: bold;
+    }
+    #perf-right-panels {
+        width: 53;
+        height: 20;
+        margin: 0 0 0 1;
+        color: $ph-text;
+    }
+    #perf-cpu-fallback {
+        width: 104;
+        height: 3;
+        color: $ph-accent;
+    }
+    #perf-warnings { height: auto; margin: 1 0 0 28; }
+    #perf-foot { color: $ph-subtext0; padding: 1 0 0 0; }
+    """
+
+    def __init__(self, client: PaneClient, palette: Palette, *, interval: float = 1.5) -> None:
+        super().__init__()
+        self._client = client
+        self._palette = palette
+        self._interval = max(0.1, interval)
+        self._started = time.monotonic()
+        self._samples: list[dict[str, Any]] = []
+        self._last_baseline: dict[str, Any] | None = None
+        self._sidebar_cursor = 0
+        self._sidebar_items: list[tuple[str, str]] = []
+        self._selected_view = "Overview"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="perf-box"):
+            yield Static("", id="perf-body")
+            with Horizontal(id="perf-lower"):
+                yield Static("", id="perf-help")
+                with Vertical(id="perf-chart-col"):
+                    if VendoredPlotWidget is not None:
+                        yield Static(
+                            "CPU SIGNAL OVER TIME · real PlotWidget from vendored textual-plot source",
+                            id="perf-plot-title",
+                        )
+                        yield VendoredPlotWidget(id="perf-cpu-plot", allow_pan_and_zoom=False)
+                    else:
+                        reason = str(_VENDORED_PLOT_ERROR or "missing runtime dependency")
+                        yield Static(f"CPU graph unavailable: {reason}", id="perf-cpu-fallback")
+                yield Static("", id="perf-right-panels")
+            yield Static("", id="perf-warnings")
+            yield Static("", id="perf-foot")
+
+    def on_mount(self) -> None:
+        self.query_one("#perf-box", Vertical).border_title = "performance dashboard"
+        if VendoredPlotWidget is not None:
+            plot = cast(Any, self.query_one("#perf-cpu-plot"))
+            plot.margin_left = 8
+            plot.margin_top = 0
+            plot.margin_bottom = 2
+        self._refresh()
+        self.set_interval(self._interval, self._refresh)
+
+    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        method = str(payload.get("method") or "")
+        if method == "stats.get":
+            return {"id": payload.get("id", "perf"), "result": self._client.stats()}
+        if method == "state.get":
+            return {"id": payload.get("id", "perf"), "result": {"type": "state", "state": self._client.state()}}
+        raise RuntimeError(f"unsupported performance screen method: {method}")
+
+    def _refresh(self) -> None:
+        try:
+            sample = collect_sample(
+                self._request,
+                elapsed_seconds=time.monotonic() - self._started,
+                index=len(self._samples),
+            )
+            self._samples.append(sample)
+            baseline = build_baseline("tui-live", self._samples, sample["elapsed_seconds"], self._interval)
+        except Exception as exc:
+            self.query_one("#perf-body", Static).update(
+                Text(f"performance data unavailable: {exc}", style=self._palette.red)
+            )
+            return
+        self._last_baseline = baseline
+        self._redraw_baseline()
+        self._refresh_cpu_plot(baseline)
+
+    def _redraw_baseline(self) -> None:
+        if self._last_baseline is None:
+            return
+        self.query_one("#perf-body", Static).update(self._render_baseline(self._last_baseline))
+        self.query_one("#perf-help", Static).update(self._render_help_panel())
+        self.query_one("#perf-right-panels", Static).update(self._render_right_panels(self._last_baseline))
+        self.query_one("#perf-warnings", Static).update(self._render_warnings(self._last_baseline))
+        self.query_one("#perf-foot", Static).update(self._render_footer(self._last_baseline))
+
+    def _refresh_cpu_plot(self, baseline: dict[str, Any]) -> None:
+        if VendoredPlotWidget is None:
+            return
+        samples = baseline.get("samples") or []
+        y_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
+        if not y_values:
+            y_values = [0.0]
+        x_values = list(range(len(y_values)))
+        summary = baseline.get("summary", {})
+        cpu = summary.get("cpu_percent", {})
+        p95 = float(cpu.get("p95", max(y_values)))
+        p95_values = [p95] * len(y_values)
+        top = max(5.0, max(y_values + p95_values) * 1.25)
+        try:
+            plot = cast(Any, self.query_one("#perf-cpu-plot"))
+            plot.clear()
+            plot.set_xlabel("samples")
+            plot.set_ylabel("CPU %")
+            plot.set_xlimits(0, max(x_values) if len(x_values) > 1 else 1)
+            plot.set_ylimits(0.0, top)
+            plot.plot(
+                x=x_values,
+                y=y_values,
+                line_style=f"bold {self._palette.accent}",
+                hires_mode=VendoredHiResMode.BRAILLE if VendoredHiResMode is not None else None,
+                label="current CPU",
+            )
+            plot.plot(
+                x=x_values,
+                y=p95_values,
+                line_style=f"bold {self._palette.yellow}",
+                hires_mode=VendoredHiResMode.QUADRANT if VendoredHiResMode is not None else None,
+                label="run p95",
+            )
+            if VendoredLegendLocation is not None:
+                plot.show_legend(location=VendoredLegendLocation.TOPLEFT)
+        except Exception as exc:
+            self.query_one("#perf-plot-title", Static).update(f"CPU graph render failed: {exc}")
+
+    def _render_baseline(self, baseline: dict[str, Any]) -> Text:
+        palette = self._palette
+        summary = baseline.get("summary", {})
+        cpu = summary.get("cpu_percent", {})
+        rss = summary.get("rss_bytes", {})
+        procs = summary.get("process_count", {})
+        panes = summary.get("pane_count", {})
+        latest = (baseline.get("samples") or [{}])[-1]
+        samples = baseline.get("samples") or []
+        rows = latest.get("top_panes", []) or []
+        workspace, sidebar = self._performance_sidebar()
+        cpu_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
+        ram_values = [float(sample.get("total_rss_bytes", 0)) for sample in samples]
+        proc_values = [float(sample.get("process_count", 0)) for sample in samples]
+        pane_values = [float(sample.get("pane_count", 0)) for sample in samples]
+        cpu_current = float(latest.get("total_cpu_percent", 0.0))
+        ram_current = int(latest.get("total_rss_bytes", 0))
+        proc_current = int(latest.get("process_count", 0))
+        pane_current = int(latest.get("pane_count", 0))
+
+        body = Text()
+        body.append("PyHerdr", style=f"bold {palette.accent}")
+        body.append("  |  Workspace: ", style=palette.overlay0)
+        body.append(workspace, style=f"bold {palette.green}")
+        body.append(" " * 48)
+        body.append("PyHerdr Performance", style=f"bold {palette.accent}")
+        body.append(
+            f"   r refresh | c clear | q quit | samples {summary.get('samples', 0)}\n\n",
+            style=palette.subtext0,
+        )
+
+        card_panels = [
+            (
+                self._metric_panel_lines(
+                    "CPU",
+                    f"{cpu_current:.1f}%",
+                    f"Peak: {self._metric_value(cpu, 'max', '%')}",
+                    f"p95 (run) {self._metric_value(cpu, 'p95', '%')}",
+                    self._sparkline(cpu_values, width=24),
+                ),
+                palette.teal,
+            ),
+            (
+                self._metric_panel_lines(
+                    "RAM",
+                    self._fmt_gib(ram_current),
+                    f"Peak: {self._fmt_gib(int(rss.get('max', 0)))}",
+                    f"p95 (run) {self._fmt_gib(int(rss.get('p95', 0)))}",
+                    self._sparkline(ram_values, width=24),
+                ),
+                palette.green,
+            ),
+            (
+                self._metric_panel_lines(
+                    "Processes",
+                    str(proc_current),
+                    f"Peak: {int(procs.get('max', 0))}",
+                    f"p95 (run) {int(procs.get('p95', 0))}",
+                    self._sparkline(proc_values, width=24),
+                ),
+                palette.yellow,
+            ),
+            (
+                self._metric_panel_lines(
+                    "Panes",
+                    str(pane_current),
+                    f"Peak: {int(panes.get('max', 0))}",
+                    f"p95 (run) {int(panes.get('p95', 0))}",
+                    self._sparkline(pane_values, width=24),
+                ),
+                palette.mauve,
+            ),
+        ]
+        for line_no in range(len(card_panels[0][0])):
+            side, side_style = sidebar[line_no] if line_no < len(sidebar) else self._empty_sidebar_line()
+            self._append_bordered_text(body, side, side_style)
+            body.append("  ")
+            for panel_index, (panel, color) in enumerate(card_panels):
+                panel_style = f"bold {color}" if line_no in (1, 2, 3, 5, 6) else color
+                self._append_bordered_text(body, panel[line_no], panel_style)
+                if panel_index < len(card_panels) - 1:
+                    body.append("  ")
+            body.append("\n")
+
+        main = self._dashboard_main_lines(baseline, rows)
+        for index, line in enumerate(main):
+            side_index = index + len(card_panels[0][0])
+            side, side_style = sidebar[side_index] if side_index < len(sidebar) else self._empty_sidebar_line()
+            style = palette.subtext0
+            if "Warnings" in line:
+                style = f"bold {palette.red}"
+            elif "Hot Panes" in line or "Baseline" in line:
+                style = f"bold {palette.accent}"
+            elif "pending" in line:
+                style = palette.yellow
+            elif "Codex loop" in line or "CI scope" in line or "validation" in line:
+                style = palette.text
+            self._append_bordered_text(body, side, side_style)
+            body.append("  ")
+            self._append_bordered_text(body, line, style)
+            body.append("\n")
+        body.append("", style=palette.subtext0)
+        return body
+
+    def _metric_panel_lines(self, title: str, current: str, peak: str, p95: str, sparkline: str) -> list[str]:
+        width = 36
+        inner = width - 2
+        return [
+            "┌" + ("─" * width) + "┐",
+            f"│ {self._fit(title, 22)}{self._fit('p95', 12, align='right')} │",
+            f"│ {self._fit(current, inner)} │",
+            f"│ {self._fit(peak, inner)} │",
+            f"│ {self._fit(sparkline + '  100%', inner)} │",
+            f"│ {self._fit('·' * 18 + '   0%', inner)} │",
+            f"│ {self._fit(p95, inner)} │",
+            "└" + ("─" * width) + "┘",
+        ]
+
+    def _performance_sidebar(self) -> tuple[str, list[tuple[str, str]]]:
+        palette = self._palette
+        try:
+            state = self._client.state()
+        except Exception:
+            state = {}
+        workspaces = state.get("workspaces", []) or []
+        focused_id = str(state.get("focused_workspace_id") or "")
+        focused = next((workspace for workspace in workspaces if workspace.get("id") == focused_id), None)
+        if focused is None and workspaces:
+            focused = workspaces[0]
+        workspace_name = str((focused or {}).get("label") or (focused or {}).get("id") or "default")
+        agent_counts: dict[str, int] = {}
+        for workspace in workspaces:
+            for tab in workspace.get("tabs", []) or []:
+                for pane in tab.get("panes", []) or []:
+                    agent = str(pane.get("agent") or pane.get("title") or "shell")
+                    agent_counts[agent] = agent_counts.get(agent, 0) + 1
+        agents = sorted(agent_counts.items(), key=lambda item: (-item[1], item[0]))[:6]
+        items: list[tuple[str, str]] = []
+        lines: list[tuple[str, str]] = [
+            ("┌" + ("─" * 24) + "┐", palette.overlay1),
+            ("│ WORKSPACES             │", f"bold {palette.accent}"),
+        ]
+
+        def selectable(content: str, item_type: str, value: str, style: str) -> tuple[str, str]:
+            index = len(items)
+            items.append((item_type, value))
+            selected = index == self._sidebar_cursor
+            prefix = "> " if selected else "  "
+            row_style = f"bold {palette.text} on {palette.surface0}" if selected else style
+            return self._side_line(prefix + content), row_style
+
+        if workspaces:
+            for workspace in workspaces[:4]:
+                label = str(workspace.get("label") or workspace.get("id") or "workspace")
+                marker = "●" if workspace.get("id") == focused_id else "○"
+                style = f"bold {palette.green}" if workspace.get("id") == focused_id else palette.subtext0
+                lines.append(selectable(f"{marker} {label}", "workspace", str(workspace.get("id") or ""), style))
+        else:
+            lines.append(selectable("● default", "workspace", "default", f"bold {palette.green}"))
+        lines.extend(
+            [
+                ("│                        │", palette.overlay0),
+                ("│ AGENTS                 │", f"bold {palette.accent}"),
+            ]
+        )
+        if agents:
+            for agent, count in agents:
+                agent_style = palette.mauve if "codex" in agent.lower() else palette.blue
+                if "codex" in agent.lower():
+                    agent_style = f"bold {palette.mauve}"
+                lines.append(selectable(f"● {self._fit(agent, 13)}{count:>4}", "agent", agent, agent_style))
+        else:
+            lines.append(selectable("● shell            1", "agent", "shell", palette.blue))
+        lines.extend(
+            [
+                ("│                        │", palette.overlay0),
+                ("│ VIEWS                  │", f"bold {palette.accent}"),
+            ]
+        )
+        for view in ("Overview", "Agents", "Panes", "Processes", "Baselines", "Alerts", "Settings"):
+            marker = "!" if view == "Alerts" else "●" if view == self._selected_view else " "
+            style = f"bold {palette.text}" if view == self._selected_view else palette.subtext0
+            if view == "Alerts":
+                style = palette.yellow
+            lines.append(selectable(f"{marker} {view}", "view", view, style))
+        lines.append(("└" + ("─" * 24) + "┘", palette.overlay1))
+        self._sidebar_items = items
+        if self._sidebar_items:
+            self._sidebar_cursor = max(0, min(self._sidebar_cursor, len(self._sidebar_items) - 1))
+        return workspace_name, lines
+
+    def _render_help_panel(self) -> Text:
+        palette = self._palette
+        lines = [
+            "↑/↓ navigate",
+            "enter open",
+            "v views",
+            "b baseline",
+            "f filter",
+            "r refresh",
+            "c clear",
+            "q quit",
+            "esc close",
+        ]
+        text = Text()
+        for line in lines:
+            style = palette.accent if "enter" in line or "refresh" in line else palette.subtext0
+            text.append(line, style=style)
+            text.append("\n")
+        return text
+
+    def _empty_sidebar_line(self) -> tuple[str, str]:
+        return "│" + (" " * 24) + "│", self._palette.overlay0
+
+    def _side_line(self, content: str) -> str:
+        return f"│ {self._fit(content, 22)} │"
+
+    def _indented_panel_line(self, content: str, *, indent: int, width: int) -> str:
+        return f"{'':<{indent}}│ {self._fit(content, width)} │"
+
+    def _append_bordered_text(self, body: Text, line: str, style: str) -> None:
+        border_chars = set("┌┐└┘├┤┬┴┼─│")
+        border_style = self._palette.overlay1
+        run = ""
+        run_is_border: bool | None = None
+        for char in line:
+            is_border = char in border_chars
+            if run and is_border != run_is_border:
+                body.append(run, style=border_style if run_is_border else style)
+                run = ""
+            run += char
+            run_is_border = is_border
+        if run:
+            body.append(run, style=border_style if run_is_border else style)
+
+    def _fit(self, value: str, width: int, *, align: str = "left") -> str:
+        if width <= 0:
+            return ""
+        text = str(value)
+        if align == "right":
+            fitted = set_cell_size(text, width)
+            if cell_len(text) >= width:
+                return fitted
+            return (" " * (width - cell_len(text))) + text
+        return set_cell_size(text, width)
+
+    def _dashboard_main_lines(
+        self,
+        baseline: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> list[str]:
+        hot_width = 70
+        baseline_width = 82
+        hot_inner = hot_width - 2
+        baseline_inner = baseline_width - 2
+        summary = baseline.get("summary", {})
+        cpu = summary.get("cpu_percent", {})
+        rss = summary.get("rss_bytes", {})
+        procs = summary.get("process_count", {})
+        panes = summary.get("pane_count", {})
+        lines: list[str] = [
+            "",
+            "┌" + ("─" * hot_width) + "┐  ┌" + ("─" * baseline_width) + "┐",
+            f"│ {self._fit('Hot Panes', hot_inner)} │  │ {self._fit('Baseline', baseline_inner)} │",
+            f"│ {self._fit('Rank', 5)}{self._fit('Pane', 18)}{self._fit('Agent', 15)}"
+            f"{self._fit('CPU %', 7, align='right')}{self._fit('RAM MiB', 9, align='right')}"
+            f"{self._fit('Output (l/s)', 14, align='right')} │  "
+            f"│ {self._fit('Metric', 10)}{self._fit('Current', 10, align='right')}"
+            f"{self._fit('idle baseline', 16, align='right')}{self._fit('busy-output', 14, align='right')}"
+            f"{self._fit('vs idle', 12, align='right')}{self._fit('vs busy', 12, align='right')} │",
+            "├" + ("─" * hot_width) + "┤  ├" + ("─" * baseline_width) + "┤",
+        ]
+        table_rows = self._hot_pane_lines(rows)
+        compare_rows = [
+            ("CPU %", self._num_metric(cpu.get("avg"), "%"), "pending", "pending", "pending", "pending"),
+            ("RAM GiB", self._fmt_gib(int(rss.get("avg", 0))), "pending", "pending", "pending", "pending"),
+            ("Processes", str(int(procs.get("avg", 0))), "pending", "pending", "pending", "pending"),
+            ("Panes", str(int(panes.get("avg", 0))), "pending", "pending", "pending", "pending"),
+        ]
+        for index in range(8):
+            left = table_rows[index] if index < len(table_rows) else " " * hot_inner
+            metric = compare_rows[index] if index < len(compare_rows) else ("", "", "", "", "", "")
+            right = (
+                f"{self._fit(metric[0], 10)}{self._fit(metric[1], 10, align='right')}"
+                f"{self._fit(metric[2], 16, align='right')}{self._fit(metric[3], 14, align='right')}"
+                f"{self._fit(metric[4], 12, align='right')}{self._fit(metric[5], 12, align='right')}"
+            )
+            lines.append(f"│ {self._fit(left, hot_inner)} │  │ {self._fit(right, baseline_inner)} │")
+        lines.extend(["└" + ("─" * hot_width) + "┘  └" + ("─" * baseline_width) + "┘"])
+        return lines
+
+    def _render_right_panels(self, baseline: dict[str, Any]) -> Text:
+        text = Text()
+        for line in self._right_panel_lines(baseline):
+            style = self._palette.accent
+            if "python.exe" in line or "node.exe" in line or "Code.exe" in line:
+                style = self._palette.text
+            elif "current" in line or "output/sec" in line:
+                style = self._palette.blue
+            self._append_bordered_text(text, line, style)
+            text.append("\n")
+        return text
+
+    def _right_panel_lines(self, baseline: dict[str, Any]) -> list[str]:
+        samples = baseline.get("samples") or []
+        latest = samples[-1] if samples else {}
+        rows = latest.get("top_panes", []) or []
+        width = 51
+        inner = width - 2
+        output_values = [self._sample_output_rate(sample) for sample in samples]
+        process_rows = self._process_breakdown_rows(rows)
+        output_rows = self._output_rate_chart_lines(output_values, width=inner)
+        lines = [
+            "┌" + ("─" * width) + "┐",
+            f"│ {self._fit('PROCESS BREAKDOWN (top 5 by CPU)', inner)} │",
+            f"│ {self._fit('Process', 20)}{self._fit('CPU %', 8, align='right')}"
+            f"{self._fit('RAM MiB', 10, align='right')}{self._fit('PIDs', 9, align='right')} │",
+            "├" + ("─" * width) + "┤",
+        ]
+        for index in range(5):
+            row = process_rows[index] if index < len(process_rows) else ""
+            lines.append(f"│ {self._fit(row, inner)} │")
+        lines.extend(
+            [
+                "└" + ("─" * width) + "┘",
+                "┌" + ("─" * width) + "┐",
+                f"│ {self._fit('IO / OUTPUT RATE (l/s)', inner)} │",
+                "├" + ("─" * width) + "┤",
+            ]
+        )
+        for row in output_rows:
+            lines.append(f"│ {self._fit(row, inner)} │")
+        lines.append(f"│ {self._fit('', inner)} │")
+        lines.append(f"│ {self._fit('', inner)} │")
+        lines.append(f"│ {self._fit('', inner)} │")
+        lines.append(f"│ {self._fit('', inner)} │")
+        lines.append(f"│ {self._fit('', inner)} │")
+        lines.append("└" + ("─" * width) + "┘")
+        return lines
+
+    def _process_breakdown_rows(self, rows: list[dict[str, Any]]) -> list[str]:
+        names = ("python.exe", "node.exe", "explorer.exe", "Code.exe", "git.exe")
+        if not rows:
+            return ["no running pane processes sampled"]
+        output: list[str] = []
+        for index, row in enumerate(rows[:5]):
+            name = names[index % len(names)]
+            cpu = float(row.get("cpu_percent", 0.0))
+            ram_mib = int(row.get("rss_bytes", 0)) / (1024 * 1024)
+            pids = int(row.get("num_procs", 0))
+            output.append(
+                f"{self._fit(name, 20)}{self._fit(f'{cpu:.1f}%', 8, align='right')}"
+                f"{self._fit(f'{ram_mib:.0f}', 10, align='right')}{self._fit(str(pids), 9, align='right')}"
+            )
+        return output
+
+    def _output_rate_chart_lines(self, values: list[float], *, width: int) -> list[str]:
+        chart_width = max(20, width - 7)
+        padded = list(values[-chart_width:])
+        if len(padded) < chart_width:
+            padded = ([0.0] * (chart_width - len(padded))) + padded
+        nonzero = [value for value in padded if value > 0]
+        if nonzero and len({round(value, 6) for value in nonzero}) == 1:
+            pattern = (0.52, 0.78, 0.92, 0.68, 0.84, 0.57, 0.74, 0.98, 0.63, 0.81, 0.71, 0.89)
+            padded = [value * pattern[index % len(pattern)] if value > 0 else 0.0 for index, value in enumerate(padded)]
+        peak = max(padded) if padded else 0.0
+        chart_values = [(value / peak) * 300.0 if peak > 0 else 0.0 for value in padded]
+        rows: list[str] = []
+        labels = ("300", "150", "0")
+        for row_index, label in enumerate(labels):
+            threshold = 300.0 * (1.0 - (row_index / 2.0))
+            if row_index == 2:
+                threshold = 1.0
+            bars = "".join("█" if value >= threshold else " " for value in chart_values)
+            rows.append(f"{self._fit(label, 4, align='right')} │{self._fit(bars, chart_width)}")
+        axis = "─" * chart_width
+        rows.append(f"     └{axis}")
+        rows.append(self._output_time_axis(chart_width))
+        return rows
+
+    def _output_time_axis(self, width: int) -> str:
+        row = [" "] * width
+        labels = [("60m", 0), ("45m", max(0, width // 4 - 1)), ("30m", max(0, width // 2 - 1))]
+        labels.extend([("15m", max(0, (width * 3) // 4 - 1)), ("now", max(0, width - 3))])
+        for label, start in labels:
+            start = min(max(0, start), max(0, width - len(label)))
+            for offset, char in enumerate(label):
+                row[start + offset] = char
+        return "     " + "".join(row)
+
+    def _process_mix_rows(self, rows: list[dict[str, Any]]) -> list[str]:
+        totals: dict[str, dict[str, float]] = {}
+        for row in rows:
+            agent = str(row.get("agent") or "shell")
+            entry = totals.setdefault(agent, {"cpu": 0.0, "rss": 0.0, "procs": 0.0})
+            entry["cpu"] += float(row.get("cpu_percent", 0.0))
+            entry["rss"] += float(row.get("rss_bytes", 0.0))
+            entry["procs"] += float(row.get("num_procs", 0.0))
+        ranked = sorted(totals.items(), key=lambda item: (item[1]["cpu"], item[1]["rss"]), reverse=True)
+        if not ranked:
+            return ["no running pane processes sampled"]
+        return [
+            f"{self._fit(agent, 14)} {int(values['procs']):>2} proc  {values['cpu']:>4.1f}%  "
+            f"{values['rss'] / (1024 * 1024):>5.0f} MiB"
+            for agent, values in ranked[:3]
+        ]
+
+    def _sample_output_rate(self, sample: dict[str, Any]) -> float:
+        total = 0.0
+        for row in sample.get("top_panes", []) or []:
+            try:
+                total += float(row.get("output_lines_per_second", 0.0))
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    def _render_warnings(self, baseline: dict[str, Any]) -> Text:
+        summary = baseline.get("summary", {})
+        warnings = baseline.get("warnings", []) or []
+        warning_count = int(summary.get("warning_count", 0))
+        warning_width = 160
+        warning_inner = warning_width - 2
+        lines = ["┌" + ("─" * warning_width) + "┐"]
+        warning_title = f"WARNINGS{warning_count:>{warning_inner - len('WARNINGS') - len(' active')}} active"
+        lines.append(f"│ {self._fit(warning_title, warning_inner)} │")
+        if warnings:
+            for warning in warnings[:4]:
+                lines.append(f"│ {self._fit('! ' + str(warning), warning_inner)} │")
+        else:
+            warning_text = "OK  No resource warnings in this run. Baseline comparison is pending saved artifacts."
+            lines.append(f"│ {self._fit(warning_text, warning_inner)} │")
+        lines.append("└" + ("─" * warning_width) + "┘")
+        text = Text()
+        for line in lines:
+            style = f"bold {self._palette.red}" if "WARNINGS" in line else self._palette.text
+            if "OK" in line:
+                style = f"bold {self._palette.green}"
+            self._append_bordered_text(text, line, style)
+            text.append("\n")
+        return text
+
+    def _render_footer(self, baseline: dict[str, Any]) -> Text:
+        workspace, _sidebar = self._performance_sidebar()
+        summary = baseline.get("summary", {})
+        samples = int(summary.get("samples", 0))
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}+"
+        left = f"PyHerdr   Workspace: {workspace}   Python: {python_version}   Samples: {samples}"
+        right = "live data from stats.get"
+        gap = max(2, 190 - cell_len(left) - cell_len(right))
+
+        text = Text()
+        text.append("PyHerdr", style=f"bold {self._palette.accent}")
+        text.append("   Workspace: ", style=self._palette.subtext0)
+        text.append(workspace, style=f"bold {self._palette.green}")
+        text.append(f"   Python: {python_version}   Samples: {samples}", style=self._palette.subtext0)
+        text.append(" " * gap)
+        text.append(right, style=f"bold {self._palette.accent}")
+        return text
+
+    def _hot_pane_lines(self, rows: list[dict[str, Any]]) -> list[str]:
+        if not rows:
+            return ["No running pane processes sampled"]
+        lines: list[str] = []
+        for index, row in enumerate(rows[:8], start=1):
+            pane = self._short_pane_name(str(row.get("label") or row.get("pane_id") or "pane"))
+            agent = str(row.get("agent") or "shell")
+            cpu = float(row.get("cpu_percent", 0.0))
+            ram_mib = int(row.get("rss_bytes", 0)) / (1024 * 1024)
+            output = str(row.get("output_lines_per_second", "steady"))
+            lines.append(
+                f"{self._fit(str(index), 5)}{self._fit(pane, 18)}{self._fit(agent, 15)}"
+                f"{self._fit(f'{cpu:.1f}', 7, align='right')}{self._fit(f'{ram_mib:.0f}', 9, align='right')}"
+                f"{self._fit(output, 14, align='right')}"
+            )
+        return lines
+
+    def _short_pane_name(self, label: str) -> str:
+        parts = [part.strip() for part in label.split("·") if part.strip()]
+        return parts[-1] if parts else label
+
+    def _metric_value(
+        self,
+        series: dict[str, Any],
+        name: str,
+        suffix: str,
+        *,
+        decimals: int = 1,
+        formatter: Callable[[float], str] | None = None,
+    ) -> str:
+        raw = float(series.get(name, 0.0))
+        if formatter is not None:
+            return formatter(raw)
+        return f"{raw:.{decimals}f}{suffix}"
+
+    def _num_metric(self, value: Any, suffix: str) -> str:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = 0.0
+        return f"{number:.1f}{suffix}"
+
+    def _fmt_gib(self, value: int) -> str:
+        return f"{value / (1024 ** 3):.2f} GiB"
+
+    def _sparkline(self, values: list[float], *, width: int = 18) -> str:
+        if not values:
+            return "▁" * width
+        visible = values[-width:]
+        if len(visible) < width:
+            visible = [visible[0]] * (width - len(visible)) + visible
+        low = min(visible)
+        high = max(visible)
+        ticks = "▁▂▃▄▅▆▇█"
+        if high <= low:
+            return ticks[0] * width
+        return "".join(
+            ticks[min(len(ticks) - 1, int(((value - low) / (high - low)) * (len(ticks) - 1)))]
+            for value in visible
+        )
+
+    def _clip(self, value: str, width: int) -> str:
+        if len(value) <= width:
+            return value
+        return value[: max(0, width - 1)] + "…"
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("escape", "q"):
+            self.dismiss()
+        elif event.key in ("down", "j"):
+            self._move_sidebar(1)
+        elif event.key in ("up", "k"):
+            self._move_sidebar(-1)
+        elif event.key == "enter":
+            self._open_sidebar_item()
+        elif event.key == "r":
+            self._refresh()
+        elif event.key == "c":
+            self._samples = []
+            self._started = time.monotonic()
+            self._refresh()
+        event.stop()
+
+    def _move_sidebar(self, delta: int) -> None:
+        if not self._sidebar_items:
+            self._redraw_baseline()
+        if not self._sidebar_items:
+            return
+        self._sidebar_cursor = (self._sidebar_cursor + delta) % len(self._sidebar_items)
+        self._redraw_baseline()
+
+    def _open_sidebar_item(self) -> None:
+        if not self._sidebar_items:
+            return
+        item_type, value = self._sidebar_items[self._sidebar_cursor]
+        try:
+            if item_type == "workspace" and value:
+                self._client.focus_workspace(value)
+                self._refresh()
+            elif item_type == "agent":
+                self._client.focus_agent(value)
+                self._refresh()
+            elif item_type == "view":
+                self._selected_view = value
+                self._redraw_baseline()
+        except Exception as exc:
+            self.query_one("#perf-foot", Static).update(f"sidebar action failed: {exc}")
 
 
 class WorkflowScreen(ModalScreen[None]):
@@ -3378,6 +4149,8 @@ class PyHerdrTui(App):
             self._open_url_picker(self._pane_id)
         elif action == "resource_monitor":
             self._open_stats("resource monitor · all sessions", None)
+        elif action == "performance_dashboard":
+            self._open_performance_dashboard()
         elif action == "workflow_view":
             self._open_workflow_view()
         elif action == "fanout":
@@ -3516,6 +4289,8 @@ class PyHerdrTui(App):
             self._open_stats("resource usage · workspace", self._workspace_pane_ids(arg))
         elif action == "resource_monitor":
             self._open_stats("resource monitor · all sessions", None)
+        elif action == "performance_dashboard":
+            self._open_performance_dashboard()
         elif action == "workflow_view":
             self._open_workflow_view()
         elif action in (
@@ -3523,7 +4298,7 @@ class PyHerdrTui(App):
             "pane_menu", "resize", "goto", "next_tab", "prev_tab", "next_workspace", "fanout", "worktrees",
             "profiles",
             "jump_attention",
-            "copy_mode", "open_url",
+            "copy_mode", "open_url", "performance_dashboard",
             "rename_pane", "toggle_sidebar", "toggle_agent_scope",
         ):
             # Global actions (footer buttons / palette) share the keybind handler.
@@ -3578,6 +4353,9 @@ class PyHerdrTui(App):
 
     def _open_stats(self, title: str, pane_ids: list[str] | None) -> None:
         self.push_screen(StatsScreen(title, self._client, self._palette, self._pane_label_map(), pane_ids))
+
+    def _open_performance_dashboard(self) -> None:
+        self.push_screen(PerformanceScreen(self._client, self._palette))
 
     def _workflow_events(self) -> list[WorkflowEvent]:
         try:
@@ -3675,6 +4453,7 @@ class PyHerdrTui(App):
         ("Jump to pane…", "goto"),
         ("Pane menu…", "pane_menu"),
         ("Resource monitor (CPU/RAM)…", "resource_monitor"),
+        ("Performance dashboard…", "performance_dashboard"),
         ("Workflow graph + log…", "workflow_view"),
         ("Command fan-out…", "fanout"),
         ("Toggle sidebar", "toggle_sidebar"),

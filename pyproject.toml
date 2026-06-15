@@ -27,10 +27,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "numpy>=2.2.1",
     "pillow>=10",
     "pydantic>=2.11,<3",
     "pyte>=0.8",
     "textual>=1.0",
+    "textual-hires-canvas>=0.14.0",
     "psutil>=5.9",
     "pywinpty>=2.0; sys_platform == 'win32'",
 ]
@@ -54,6 +56,7 @@ dev = ["ruff>=0.6", "mypy>=1.11"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+extend-exclude = ["pyherdr/vendor/textual_plot"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -62,6 +65,7 @@ select = ["E", "F", "I", "B", "UP"]
 python_version = "3.11"
 platform = "linux"
 files = ["pyherdr"]
+exclude = ["pyherdr/vendor/textual_plot"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -69,3 +73,8 @@ no_implicit_optional = true
 [[tool.mypy.overrides]]
 module = ["PIL.*", "pyte.*", "winpty.*", "psutil.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pyherdr.vendor.textual_plot.*", "textual_hires_canvas.*", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

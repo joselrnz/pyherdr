@@ -39,6 +39,9 @@ reattach without losing a session.
 - **📊 Resource monitor** — right-click a pane or workspace → *resource usage*,
   or open *Resource monitor* — a live task-manager of CPU% + RAM per process,
   biggest-first, for one pane, a whole workspace, or every session.
+- **Performance baselines** — open *Performance dashboard* in the command
+  palette/footer or run `pyherdr perf baseline/dashboard/report` to capture
+  CPU, RAM, process count, pane count, and hot-pane summaries for comparison.
 - **Themes** — Ocean Blue by default, plus many built-ins (Catppuccin, Tokyo
   Night, Gruvbox, One Dark, Solarized, Rosé Pine, Kanagawa, …) with live theme +
   accent switching.
@@ -239,6 +242,29 @@ failed pane, and the pane can run successfully afterward.
 python -m tools.recovery_scenario --json
 ```
 
+### Record a performance baseline
+
+The performance baseline command samples PyHerdr's current pane process trees
+through the server resource monitor, then saves CPU/RAM/process summaries for
+later comparison.
+
+```bash
+python -m pyherdr perf baseline --scenario idle --duration 60 --output .artifacts/perf/idle.json
+python -m pyherdr perf dashboard --duration 5
+python -m pyherdr perf report .artifacts/perf/idle.json
+```
+
+The TUI also exposes the same process as **Performance dashboard** in the
+command palette and the bottom footer. It uses the same `stats.get` resource
+monitor and keeps a live in-memory run history for dashboard sparklines. The
+CPU graph uses a vendored copy of `textual-plot` under
+`pyherdr/vendor/textual_plot/` with its MIT license preserved beside the source.
+It plots live CPU samples with a run-p95 overlay.
+The current target concept is saved at
+`assets/screens/performance-dashboard-target-concept.png`.
+
+<img src="assets/screens/performance-dashboard.png" alt="PyHerdr performance dashboard showing CPU, RAM, baseline compare, sparklines, hot panes, and a vendored textual-plot CPU graph" width="820">
+
 ## ⌨️ Keybindings
 
 Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
@@ -259,7 +285,7 @@ Keys go to the focused pane. Press the **prefix `ctrl+b`**, then an action key:
 
 **Mouse:** click tabs/panes, drag a divider to resize, right-click panes, tabs,
 or workspace rows for context menus (including *resource usage*). The bottom **action bar** has clickable
-buttons for help, palette, new tab, split, terminal, stats, theme, detach, quit.
+buttons for help, palette, new tab, split, terminal, stats, performance, theme, detach, quit.
 The new-workspace folder picker starts from the active workspace and includes
 quick jumps for the workspace root, recent roots, git repo root, process cwd,
 and home. The current folder is shown in a boxed card beside an `Open Folder`

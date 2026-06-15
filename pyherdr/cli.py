@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_notification(args)
     if args.command == "workflow":
         return run_workflow(args)
+    if args.command == "perf":
+        return run_perf(args)
     if args.command == "roadmap":
         return run_roadmap(args)
     if args.command == "schedule":
@@ -138,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
             "main",
             "agent-ux",
             "workflow",
+            "performance",
             "fanout",
             "workspace-picker",
             "workspace-search",
@@ -269,6 +272,22 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_graph.add_argument("--limit", type=int, default=100)
     workflow_graph.add_argument("--format", choices=["json", "mermaid", "svg"], default="json")
     workflow_graph.add_argument("--output", help="write graph to a file instead of stdout")
+
+    perf = sub.add_parser("perf", help="performance baseline and dashboard commands")
+    perf_sub = perf.add_subparsers(dest="perf_command", required=True)
+    perf_baseline = perf_sub.add_parser("baseline", help="record a CPU/RAM/process baseline")
+    perf_baseline.add_argument("--scenario", default="manual", help="scenario label stored in the baseline")
+    perf_baseline.add_argument("--duration", type=float, default=30.0, help="seconds to sample")
+    perf_baseline.add_argument("--interval", type=float, default=1.5, help="seconds between samples")
+    perf_baseline.add_argument("--output", "-o", help="optional JSON file to write")
+    perf_baseline.add_argument("--json", action="store_true", help="print machine-readable baseline JSON")
+    perf_dashboard = perf_sub.add_parser("dashboard", help="print a compact live performance dashboard")
+    perf_dashboard.add_argument("--duration", type=float, default=0.0, help="seconds to sample before rendering")
+    perf_dashboard.add_argument("--interval", type=float, default=1.5, help="seconds between samples")
+    perf_dashboard.add_argument("--json", action="store_true", help="print machine-readable dashboard JSON")
+    perf_report = perf_sub.add_parser("report", help="render a saved baseline JSON")
+    perf_report.add_argument("path")
+    perf_report.add_argument("--json", action="store_true", help="print the raw baseline JSON")
 
     roadmap = sub.add_parser("roadmap", help="internal roadmap/worksite tracker commands")
     roadmap_sub = roadmap.add_subparsers(dest="roadmap_command", required=True)
@@ -683,6 +702,49 @@ def run_workflow(args) -> int:
             print(output_path)
         else:
             print(output)
+        return 0
+    return 2
+
+
+def run_perf(args) -> int:
+    from .performance import collect_baseline, load_baseline, render_baseline_report, write_baseline
+
+    if args.perf_command == "report":
+        baseline = load_baseline(Path(args.path))
+        if args.json:
+            print(json.dumps(baseline, indent=2))
+        else:
+            print(render_baseline_report(baseline))
+        return 0
+    if args.perf_command == "dashboard":
+        baseline = collect_baseline(
+            ensure_request,
+            scenario="dashboard",
+            duration_seconds=args.duration,
+            interval_seconds=args.interval,
+        )
+        if args.json:
+            print(json.dumps(baseline, indent=2))
+        else:
+            print(render_baseline_report(baseline))
+        return 0
+    if args.perf_command == "baseline":
+        baseline = collect_baseline(
+            ensure_request,
+            scenario=args.scenario,
+            duration_seconds=args.duration,
+            interval_seconds=args.interval,
+        )
+        output_path = write_baseline(Path(args.output), baseline) if args.output else None
+        if args.json:
+            payload = dict(baseline)
+            if output_path is not None:
+                payload["path"] = str(output_path)
+            print(json.dumps(payload, indent=2))
+        else:
+            print(render_baseline_report(baseline))
+            if output_path is not None:
+                print(f"\nsaved: {output_path}")
         return 0
     return 2
 

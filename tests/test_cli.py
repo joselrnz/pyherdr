@@ -24,6 +24,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "demo-screenshot")
         self.assertEqual(args.view, "fanout")
 
+    def test_demo_screenshot_accepts_performance_view(self):
+        args = build_parser().parse_args(["demo-screenshot", "--view", "performance"])
+
+        self.assertEqual(args.command, "demo-screenshot")
+        self.assertEqual(args.view, "performance")
+
     def test_demo_screenshot_accepts_agent_ux_view(self):
         args = build_parser().parse_args(["demo-screenshot", "--view", "agent-ux"])
 
@@ -108,6 +114,34 @@ class CliTests(unittest.TestCase):
         self.assertIn("Codex", plain)
         self.assertIn("Aider", plain)
         self.assertIn("blocked", plain)
+
+    def test_demo_screenshot_renders_performance_view(self):
+        import html
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = render_demo_screenshot(Path(tmp) / "performance.svg", width=220, height=68, view="performance")
+
+            svg = output.read_text(encoding="utf-8")
+        plain = html.unescape(svg).replace("\xa0", " ")
+        self.assertIn("performance dashboard", plain)
+        self.assertIn("PyHerdr Performance", plain)
+        self.assertIn("Baseline", plain)
+        self.assertIn("Agent", plain)
+        self.assertIn("Output", plain)
+        self.assertIn("idle baseline", plain)
+        self.assertIn("busy-output", plain)
+        self.assertIn("vs idle", plain)
+        self.assertIn("vs busy", plain)
+        self.assertIn("CPU SIGNAL OVER TIME", plain)
+        self.assertIn("vendored textual-plot source", plain)
+        self.assertIn("current CPU", plain)
+        self.assertIn("run p95", plain)
+        self.assertIn("PROCESS BREAKDOWN", plain)
+        self.assertIn("IO / OUTPUT RATE", plain)
+        self.assertIn("Hot Panes", plain)
+        self.assertIn("WARNINGS", plain)
+        self.assertIn("Codex loop", plain)
 
     def test_demo_screenshot_renders_workspace_search_view(self):
         import html
@@ -224,6 +258,38 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.all)
         self.assertTrue(args.json)
         self.assertTrue(args.prune)
+
+    def test_perf_baseline_accepts_duration_interval_output_and_json(self):
+        args = build_parser().parse_args(
+            [
+                "perf",
+                "baseline",
+                "--scenario",
+                "idle",
+                "--duration",
+                "10",
+                "--interval",
+                "0.5",
+                "--output",
+                "idle.json",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(args.command, "perf")
+        self.assertEqual(args.perf_command, "baseline")
+        self.assertEqual(args.scenario, "idle")
+        self.assertEqual(args.duration, 10)
+        self.assertEqual(args.interval, 0.5)
+        self.assertEqual(args.output, "idle.json")
+        self.assertTrue(args.json)
+
+    def test_perf_report_accepts_saved_baseline_path(self):
+        args = build_parser().parse_args(["perf", "report", "idle.json"])
+
+        self.assertEqual(args.command, "perf")
+        self.assertEqual(args.perf_command, "report")
+        self.assertEqual(args.path, "idle.json")
 
     def test_workspace_search_accepts_json_and_scan_overrides(self):
         args = build_parser().parse_args(

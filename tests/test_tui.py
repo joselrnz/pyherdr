@@ -27,6 +27,7 @@ from pyherdr.presentation.tui import (
     HelpScreen,
     NavigatorScreen,
     PaneView,
+    PerformanceScreen,
     ProfilePickerScreen,
     PyHerdrTui,
     RenameScreen,
@@ -348,6 +349,29 @@ class FakeClient:
 
 
 class TuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_performance_screen_sidebar_keyboard_navigation(self):
+        client = FakeClient()
+        app = PyHerdrTui(client=client, poll_interval=100)
+        async with app.run_test(size=(220, 68)) as pilot:
+            screen = PerformanceScreen(client, CATPPUCCIN_MOCHA, interval=60)
+            app.push_screen(screen)
+            await pilot.pause(0.2)
+
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            self.assertEqual(client.focused_workspaces[-1], "ws1")
+
+            overview_index = next(
+                index
+                for index, item in enumerate(screen._sidebar_items)
+                if item == ("view", "Overview")
+            )
+            for _ in range(overview_index):
+                await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            self.assertEqual(screen._selected_view, "Overview")
+
     async def test_renders_a_view_per_pane_in_focused_tab(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
         async with app.run_test() as pilot:
