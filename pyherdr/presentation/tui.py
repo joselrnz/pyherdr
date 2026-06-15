@@ -860,7 +860,7 @@ class PerformanceScreen(ModalScreen[None]):
 
     def _apply_responsive_widget_layout(self, mode: str) -> None:
         show_plot_row = mode == "full"
-        for selector in ("#perf-lower", "#perf-help", "#perf-chart-col", "#perf-right-panels"):
+        for selector in ("#perf-lower", "#perf-help", "#perf-chart-col", "#perf-right-panels", "#perf-warnings"):
             try:
                 self.query_one(selector).display = show_plot_row
             except Exception:
@@ -994,29 +994,34 @@ class PerformanceScreen(ModalScreen[None]):
         panes = summary.get("pane_count", {})
         cpu_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
         ram_values = [float(sample.get("total_rss_bytes", 0)) for sample in samples]
-        proc_values = [float(sample.get("process_count", 0)) for sample in samples]
-        pane_values = [float(sample.get("pane_count", 0)) for sample in samples]
 
-        metric_lines = [
-            f"CPU {float(latest.get('total_cpu_percent', 0.0)):.1f}%  p95 {self._metric_value(cpu, 'p95', '%')}",
-            f"  {self._sparkline(cpu_values, width=max(10, width - 18))}",
-            f"RAM {self._fmt_gib(int(latest.get('total_rss_bytes', 0)))}  p95 {self._fmt_gib(int(rss.get('p95', 0)))}",
-            f"  {self._sparkline(ram_values, width=max(10, width - 18))}",
-            f"PROC {int(latest.get('process_count', 0))}  p95 {int(procs.get('p95', 0))}",
-            f"PANES {int(latest.get('pane_count', 0))}  p95 {int(panes.get('p95', 0))}",
-            f"  {self._sparkline(proc_values + pane_values, width=max(10, width - 18))}",
-        ]
-        hot_rows = self._hot_pane_lines_compact(rows, max(24, width - 4))
+        hot_rows = self._hot_pane_lines_compact(rows, max(24, width))[:4]
         warning_rows = self._warning_rows_compact(baseline, max(24, width - 4))
+        cpu_line = (
+            f"CPU   {float(latest.get('total_cpu_percent', 0.0)):.1f}%  "
+            f"p95 {self._metric_value(cpu, 'p95', '%')}"
+        )
+        ram_line = (
+            f"RAM   {self._fmt_gib(int(latest.get('total_rss_bytes', 0)))}  "
+            f"p95 {self._fmt_gib(int(rss.get('p95', 0)))}"
+        )
         lines = [
             self._fit("PyHerdr Performance · compact", width),
             self._fit(f"samples {summary.get('samples', 0)} · r refresh · q quit", width),
             "",
-            *self._box_lines("metrics", metric_lines, width),
+            self._fit("metrics", width),
+            self._fit(cpu_line, width),
+            self._fit(ram_line, width),
+            self._fit(f"PROC  {int(latest.get('process_count', 0))}  p95 {int(procs.get('p95', 0))}", width),
+            self._fit(f"PANES {int(latest.get('pane_count', 0))}  p95 {int(panes.get('p95', 0))}", width),
+            self._fit(self._sparkline(cpu_values, width=max(10, width - 8)), width),
+            self._fit(self._sparkline(ram_values, width=max(10, width - 8)), width),
             "",
-            *self._box_lines("hot panes", hot_rows, width),
+            self._fit("hot panes", width),
+            *[self._fit(row, width) for row in hot_rows],
             "",
-            *self._box_lines("warnings", warning_rows, width),
+            self._fit("warnings", width),
+            *[self._fit(row, width) for row in warning_rows[:2]],
         ]
         return self._text_from_lines(lines, palette.text, width)
 
@@ -1033,41 +1038,31 @@ class PerformanceScreen(ModalScreen[None]):
         panel_width = max(28, (width - 4) // 2)
         cpu_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
         ram_values = [float(sample.get("total_rss_bytes", 0)) for sample in samples]
-        proc_values = [float(sample.get("process_count", 0)) for sample in samples]
-        pane_values = [float(sample.get("pane_count", 0)) for sample in samples]
-        panels = [
-            self._metric_panel_lines(
-                "CPU",
-                f"{float(latest.get('total_cpu_percent', 0.0)):.1f}%",
-                f"Peak: {self._metric_value(cpu, 'max', '%')}",
-                f"p95 (run) {self._metric_value(cpu, 'p95', '%')}",
-                self._sparkline(cpu_values, width=max(8, panel_width - 16)),
-                width=panel_width - 2,
-            ),
-            self._metric_panel_lines(
-                "RAM",
-                self._fmt_gib(int(latest.get("total_rss_bytes", 0))),
-                f"Peak: {self._fmt_gib(int(rss.get('max', 0)))}",
-                f"p95 (run) {self._fmt_gib(int(rss.get('p95', 0)))}",
-                self._sparkline(ram_values, width=max(8, panel_width - 16)),
-                width=panel_width - 2,
-            ),
-            self._metric_panel_lines(
-                "Processes",
-                str(int(latest.get("process_count", 0))),
-                f"Peak: {int(procs.get('max', 0))}",
-                f"p95 (run) {int(procs.get('p95', 0))}",
-                self._sparkline(proc_values, width=max(8, panel_width - 16)),
-                width=panel_width - 2,
-            ),
-            self._metric_panel_lines(
-                "Panes",
-                str(int(latest.get("pane_count", 0))),
-                f"Peak: {int(panes.get('max', 0))}",
-                f"p95 (run) {int(panes.get('p95', 0))}",
-                self._sparkline(pane_values, width=max(8, panel_width - 16)),
-                width=panel_width - 2,
-            ),
+        cpu_line = (
+            f"CPU {float(latest.get('total_cpu_percent', 0.0)):.1f}% · "
+            f"peak {self._metric_value(cpu, 'max', '%')} · p95 {self._metric_value(cpu, 'p95', '%')}"
+        )
+        proc_line = (
+            f"PROC {int(latest.get('process_count', 0))} · peak {int(procs.get('max', 0))} · "
+            f"p95 {int(procs.get('p95', 0))}"
+        )
+        ram_line = (
+            f"RAM {self._fmt_gib(int(latest.get('total_rss_bytes', 0)))} · "
+            f"peak {self._fmt_gib(int(rss.get('max', 0)))} · p95 {self._fmt_gib(int(rss.get('p95', 0)))}"
+        )
+        panes_line = (
+            f"PANES {int(latest.get('pane_count', 0))} · peak {int(panes.get('max', 0))} · "
+            f"p95 {int(panes.get('p95', 0))}"
+        )
+        left_metric = [
+            cpu_line,
+            proc_line,
+            self._sparkline(cpu_values, width=max(8, panel_width - 6)),
+        ]
+        right_metric = [
+            ram_line,
+            panes_line,
+            self._sparkline(ram_values, width=max(8, panel_width - 6)),
         ]
         lines = [
             self._fit(
@@ -1075,18 +1070,19 @@ class PerformanceScreen(ModalScreen[None]):
                 width,
             ),
             "",
+            self._fit("metrics", width),
         ]
-        for left_index in (0, 2):
-            left = panels[left_index]
-            right = panels[left_index + 1]
-            for line_index, left_line in enumerate(left):
-                lines.append(self._fit(left_line, panel_width) + "  " + self._fit(right[line_index], panel_width))
-            lines.append("")
-        lines.extend(self._hot_panes_panel_lines(rows, width))
+        for line_index, left_line in enumerate(left_metric):
+            lines.append(self._fit(left_line, panel_width) + "  " + self._fit(right_metric[line_index], panel_width))
         lines.append("")
-        lines.extend(self._baseline_compare_panel_lines(baseline, width))
+        lines.append(self._fit("hot panes", width))
+        lines.extend(self._hot_pane_lines_compact(rows, max(20, width))[:5])
         lines.append("")
-        lines.extend(self._warning_panel_lines(baseline, width))
+        lines.append(self._fit("baseline", width))
+        lines.extend(self._baseline_compare_rows(baseline)[:4])
+        lines.append("")
+        lines.append(self._fit("warnings", width))
+        lines.extend(self._warning_rows_compact(baseline, max(20, width))[:3])
         return self._text_from_lines(lines, palette.text, width)
 
     def _metric_panel_lines(
@@ -1128,18 +1124,20 @@ class PerformanceScreen(ModalScreen[None]):
         return self._box_lines("hot panes", self._hot_pane_lines_compact(rows, max(20, width - 4)), width)
 
     def _baseline_compare_panel_lines(self, baseline: dict[str, Any], width: int) -> list[str]:
+        return self._box_lines("baseline", self._baseline_compare_rows(baseline), width)
+
+    def _baseline_compare_rows(self, baseline: dict[str, Any]) -> list[str]:
         summary = baseline.get("summary", {})
         cpu = summary.get("cpu_percent", {})
         rss = summary.get("rss_bytes", {})
         procs = summary.get("process_count", {})
         panes = summary.get("pane_count", {})
-        rows = [
+        return [
             f"CPU avg {self._num_metric(cpu.get('avg'), '%')} · p95 {self._num_metric(cpu.get('p95'), '%')}",
             f"RAM avg {self._fmt_gib(int(rss.get('avg', 0)))} · p95 {self._fmt_gib(int(rss.get('p95', 0)))}",
             f"PROC avg {int(procs.get('avg', 0))} · peak {int(procs.get('max', 0))}",
             f"PANES avg {int(panes.get('avg', 0))} · peak {int(panes.get('max', 0))}",
         ]
-        return self._box_lines("baseline", rows, width)
 
     def _warning_panel_lines(self, baseline: dict[str, Any], width: int) -> list[str]:
         return self._box_lines("warnings", self._warning_rows_compact(baseline, max(20, width - 4)), width)

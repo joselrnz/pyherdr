@@ -391,6 +391,20 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(lines)
                 self.assertLessEqual(max(screen._cell_width(line) for line in lines), width)
 
+    def test_performance_screen_compact_modes_keep_key_sections_visible(self):
+        screen = PerformanceScreen(FakeClient(), CATPPUCCIN_MOCHA, interval=60)
+        baseline = self._performance_baseline_fixture()
+
+        for width, max_lines in ((80, 24), (120, 28)):
+            with self.subTest(width=width):
+                text = screen._render_baseline_for_width(baseline, width).plain
+                lines = text.splitlines()
+                self.assertLessEqual(len(lines), max_lines)
+                self.assertIn("metrics", text)
+                self.assertIn("hot panes", text)
+                self.assertIn("warnings", text)
+                self.assertIn("codex-validation-runner", text)
+
     def _performance_baseline_fixture(self) -> dict:
         samples = [
             {
