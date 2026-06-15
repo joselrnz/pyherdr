@@ -654,7 +654,8 @@ class PerformanceScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     PerformanceScreen { align: center middle; background: $ph-base 80%; }
     #perf-box {
-        width: 202;
+        width: 96%;
+        min-width: 58;
         max-width: 100%;
         height: auto;
         max-height: 98%;
@@ -666,6 +667,7 @@ class PerformanceScreen(ModalScreen[None]):
     }
     #perf-body { height: auto; }
     #perf-lower {
+        width: 100%;
         height: 20;
         margin: 1 0 0 0;
     }
@@ -677,7 +679,7 @@ class PerformanceScreen(ModalScreen[None]):
         padding: 0 1;
     }
     #perf-chart-col {
-        width: 108;
+        width: 2fr;
         height: 20;
         margin: 0 0 0 2;
         border: solid $ph-overlay0;
@@ -689,7 +691,7 @@ class PerformanceScreen(ModalScreen[None]):
         text-style: bold;
     }
     #perf-cpu-plot {
-        width: 104;
+        width: 100%;
         height: 16;
         background: $ph-base;
     }
@@ -705,17 +707,17 @@ class PerformanceScreen(ModalScreen[None]):
         text-style: bold;
     }
     #perf-right-panels {
-        width: 53;
+        width: 1fr;
         height: 20;
         margin: 0 0 0 1;
         color: $ph-text;
     }
     #perf-cpu-fallback {
-        width: 104;
+        width: 100%;
         height: 3;
         color: $ph-accent;
     }
-    #perf-warnings { height: auto; margin: 1 0 0 28; }
+    #perf-warnings { height: auto; margin: 1 0 0 0; }
     #perf-foot { color: $ph-subtext0; padding: 1 0 0 0; }
     """
 
@@ -730,6 +732,7 @@ class PerformanceScreen(ModalScreen[None]):
         self._sidebar_cursor = 0
         self._sidebar_items: list[tuple[str, str]] = []
         self._selected_view = "Overview"
+        self._last_layout_mode = "full"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="perf-box"):
@@ -789,6 +792,9 @@ class PerformanceScreen(ModalScreen[None]):
     def _redraw_baseline(self) -> None:
         if self._last_baseline is None:
             return
+        width = self._dashboard_width()
+        self._last_layout_mode = self._performance_layout_mode(width)
+        self._apply_responsive_widget_layout(self._last_layout_mode)
         self.query_one("#perf-body", Static).update(self._render_baseline(self._last_baseline))
         self.query_one("#perf-help", Static).update(self._render_help_panel())
         self.query_one("#perf-right-panels", Static).update(self._render_right_panels(self._last_baseline))
@@ -796,7 +802,7 @@ class PerformanceScreen(ModalScreen[None]):
         self.query_one("#perf-foot", Static).update(self._render_footer(self._last_baseline))
 
     def _refresh_cpu_plot(self, baseline: dict[str, Any]) -> None:
-        if VendoredPlotWidget is None:
+        if VendoredPlotWidget is None or self._last_layout_mode != "full":
             return
         samples = baseline.get("samples") or []
         y_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
@@ -834,7 +840,45 @@ class PerformanceScreen(ModalScreen[None]):
         except Exception as exc:
             self.query_one("#perf-plot-title", Static).update(f"CPU graph render failed: {exc}")
 
+    def on_resize(self, _event: events.Resize) -> None:
+        self._redraw_baseline()
+        if self._last_baseline is not None:
+            self._refresh_cpu_plot(self._last_baseline)
+
+    def _dashboard_width(self) -> int:
+        raw_width = int(getattr(self.size, "width", 0) or 0)
+        if raw_width <= 0:
+            return 190
+        return max(56, min(190, raw_width - 6))
+
+    def _performance_layout_mode(self, width: int) -> str:
+        if width < 100:
+            return "compact"
+        if width < 180:
+            return "medium"
+        return "full"
+
+    def _apply_responsive_widget_layout(self, mode: str) -> None:
+        show_plot_row = mode == "full"
+        for selector in ("#perf-lower", "#perf-help", "#perf-chart-col", "#perf-right-panels"):
+            try:
+                self.query_one(selector).display = show_plot_row
+            except Exception:
+                continue
+
     def _render_baseline(self, baseline: dict[str, Any]) -> Text:
+        return self._render_baseline_for_width(baseline, self._dashboard_width())
+
+    def _render_baseline_for_width(self, baseline: dict[str, Any], width: int) -> Text:
+        width = max(56, min(190, int(width)))
+        mode = self._performance_layout_mode(width)
+        if mode == "compact":
+            return self._render_compact_baseline(baseline, width)
+        if mode == "medium":
+            return self._render_medium_baseline(baseline, width)
+        return self._render_full_baseline(baseline)
+
+    def _render_full_baseline(self, baseline: dict[str, Any]) -> Text:
         palette = self._palette
         summary = baseline.get("summary", {})
         cpu = summary.get("cpu_percent", {})
@@ -938,12 +982,128 @@ class PerformanceScreen(ModalScreen[None]):
         body.append("", style=palette.subtext0)
         return body
 
-    def _metric_panel_lines(self, title: str, current: str, peak: str, p95: str, sparkline: str) -> list[str]:
-        width = 36
+    def _render_compact_baseline(self, baseline: dict[str, Any], width: int) -> Text:
+        palette = self._palette
+        summary = baseline.get("summary", {})
+        latest = (baseline.get("samples") or [{}])[-1]
+        samples = baseline.get("samples") or []
+        rows = latest.get("top_panes", []) or []
+        cpu = summary.get("cpu_percent", {})
+        rss = summary.get("rss_bytes", {})
+        procs = summary.get("process_count", {})
+        panes = summary.get("pane_count", {})
+        cpu_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
+        ram_values = [float(sample.get("total_rss_bytes", 0)) for sample in samples]
+        proc_values = [float(sample.get("process_count", 0)) for sample in samples]
+        pane_values = [float(sample.get("pane_count", 0)) for sample in samples]
+
+        metric_lines = [
+            f"CPU {float(latest.get('total_cpu_percent', 0.0)):.1f}%  p95 {self._metric_value(cpu, 'p95', '%')}",
+            f"  {self._sparkline(cpu_values, width=max(10, width - 18))}",
+            f"RAM {self._fmt_gib(int(latest.get('total_rss_bytes', 0)))}  p95 {self._fmt_gib(int(rss.get('p95', 0)))}",
+            f"  {self._sparkline(ram_values, width=max(10, width - 18))}",
+            f"PROC {int(latest.get('process_count', 0))}  p95 {int(procs.get('p95', 0))}",
+            f"PANES {int(latest.get('pane_count', 0))}  p95 {int(panes.get('p95', 0))}",
+            f"  {self._sparkline(proc_values + pane_values, width=max(10, width - 18))}",
+        ]
+        hot_rows = self._hot_pane_lines_compact(rows, max(24, width - 4))
+        warning_rows = self._warning_rows_compact(baseline, max(24, width - 4))
+        lines = [
+            self._fit("PyHerdr Performance · compact", width),
+            self._fit(f"samples {summary.get('samples', 0)} · r refresh · q quit", width),
+            "",
+            *self._box_lines("metrics", metric_lines, width),
+            "",
+            *self._box_lines("hot panes", hot_rows, width),
+            "",
+            *self._box_lines("warnings", warning_rows, width),
+        ]
+        return self._text_from_lines(lines, palette.text, width)
+
+    def _render_medium_baseline(self, baseline: dict[str, Any], width: int) -> Text:
+        palette = self._palette
+        summary = baseline.get("summary", {})
+        cpu = summary.get("cpu_percent", {})
+        rss = summary.get("rss_bytes", {})
+        procs = summary.get("process_count", {})
+        panes = summary.get("pane_count", {})
+        latest = (baseline.get("samples") or [{}])[-1]
+        samples = baseline.get("samples") or []
+        rows = latest.get("top_panes", []) or []
+        panel_width = max(28, (width - 4) // 2)
+        cpu_values = [float(sample.get("total_cpu_percent", 0.0)) for sample in samples]
+        ram_values = [float(sample.get("total_rss_bytes", 0)) for sample in samples]
+        proc_values = [float(sample.get("process_count", 0)) for sample in samples]
+        pane_values = [float(sample.get("pane_count", 0)) for sample in samples]
+        panels = [
+            self._metric_panel_lines(
+                "CPU",
+                f"{float(latest.get('total_cpu_percent', 0.0)):.1f}%",
+                f"Peak: {self._metric_value(cpu, 'max', '%')}",
+                f"p95 (run) {self._metric_value(cpu, 'p95', '%')}",
+                self._sparkline(cpu_values, width=max(8, panel_width - 16)),
+                width=panel_width - 2,
+            ),
+            self._metric_panel_lines(
+                "RAM",
+                self._fmt_gib(int(latest.get("total_rss_bytes", 0))),
+                f"Peak: {self._fmt_gib(int(rss.get('max', 0)))}",
+                f"p95 (run) {self._fmt_gib(int(rss.get('p95', 0)))}",
+                self._sparkline(ram_values, width=max(8, panel_width - 16)),
+                width=panel_width - 2,
+            ),
+            self._metric_panel_lines(
+                "Processes",
+                str(int(latest.get("process_count", 0))),
+                f"Peak: {int(procs.get('max', 0))}",
+                f"p95 (run) {int(procs.get('p95', 0))}",
+                self._sparkline(proc_values, width=max(8, panel_width - 16)),
+                width=panel_width - 2,
+            ),
+            self._metric_panel_lines(
+                "Panes",
+                str(int(latest.get("pane_count", 0))),
+                f"Peak: {int(panes.get('max', 0))}",
+                f"p95 (run) {int(panes.get('p95', 0))}",
+                self._sparkline(pane_values, width=max(8, panel_width - 16)),
+                width=panel_width - 2,
+            ),
+        ]
+        lines = [
+            self._fit(
+                f"PyHerdr Performance · samples {summary.get('samples', 0)} · medium · r refresh · q quit",
+                width,
+            ),
+            "",
+        ]
+        for left_index in (0, 2):
+            left = panels[left_index]
+            right = panels[left_index + 1]
+            for line_index, left_line in enumerate(left):
+                lines.append(self._fit(left_line, panel_width) + "  " + self._fit(right[line_index], panel_width))
+            lines.append("")
+        lines.extend(self._hot_panes_panel_lines(rows, width))
+        lines.append("")
+        lines.extend(self._baseline_compare_panel_lines(baseline, width))
+        lines.append("")
+        lines.extend(self._warning_panel_lines(baseline, width))
+        return self._text_from_lines(lines, palette.text, width)
+
+    def _metric_panel_lines(
+        self,
+        title: str,
+        current: str,
+        peak: str,
+        p95: str,
+        sparkline: str,
+        *,
+        width: int = 36,
+    ) -> list[str]:
+        width = max(22, width)
         inner = width - 2
         return [
             "┌" + ("─" * width) + "┐",
-            f"│ {self._fit(title, 22)}{self._fit('p95', 12, align='right')} │",
+            f"│ {self._fit(title, max(8, inner - 12))}{self._fit('p95', min(12, inner), align='right')} │",
             f"│ {self._fit(current, inner)} │",
             f"│ {self._fit(peak, inner)} │",
             f"│ {self._fit(sparkline + '  100%', inner)} │",
@@ -951,6 +1111,70 @@ class PerformanceScreen(ModalScreen[None]):
             f"│ {self._fit(p95, inner)} │",
             "└" + ("─" * width) + "┘",
         ]
+
+    def _box_lines(self, title: str, rows: list[str], width: int) -> list[str]:
+        width = max(18, width)
+        inner = width - 2
+        lines = ["┌" + ("─" * width) + "┐", f"│ {self._fit(title, inner)} │"]
+        lines.append("├" + ("─" * width) + "┤")
+        if rows:
+            lines.extend(f"│ {self._fit(row, inner)} │" for row in rows)
+        else:
+            lines.append(f"│ {self._fit('none', inner)} │")
+        lines.append("└" + ("─" * width) + "┘")
+        return lines
+
+    def _hot_panes_panel_lines(self, rows: list[dict[str, Any]], width: int) -> list[str]:
+        return self._box_lines("hot panes", self._hot_pane_lines_compact(rows, max(20, width - 4)), width)
+
+    def _baseline_compare_panel_lines(self, baseline: dict[str, Any], width: int) -> list[str]:
+        summary = baseline.get("summary", {})
+        cpu = summary.get("cpu_percent", {})
+        rss = summary.get("rss_bytes", {})
+        procs = summary.get("process_count", {})
+        panes = summary.get("pane_count", {})
+        rows = [
+            f"CPU avg {self._num_metric(cpu.get('avg'), '%')} · p95 {self._num_metric(cpu.get('p95'), '%')}",
+            f"RAM avg {self._fmt_gib(int(rss.get('avg', 0)))} · p95 {self._fmt_gib(int(rss.get('p95', 0)))}",
+            f"PROC avg {int(procs.get('avg', 0))} · peak {int(procs.get('max', 0))}",
+            f"PANES avg {int(panes.get('avg', 0))} · peak {int(panes.get('max', 0))}",
+        ]
+        return self._box_lines("baseline", rows, width)
+
+    def _warning_panel_lines(self, baseline: dict[str, Any], width: int) -> list[str]:
+        return self._box_lines("warnings", self._warning_rows_compact(baseline, max(20, width - 4)), width)
+
+    def _hot_pane_lines_compact(self, rows: list[dict[str, Any]], width: int) -> list[str]:
+        if not rows:
+            return ["No running pane processes sampled"]
+        output: list[str] = []
+        name_width = max(12, width - 28)
+        for index, row in enumerate(rows[:6], start=1):
+            pane = self._short_pane_name(str(row.get("label") or row.get("pane_id") or "pane"))
+            cpu = float(row.get("cpu_percent", 0.0))
+            ram_mib = int(row.get("rss_bytes", 0)) / (1024 * 1024)
+            output.append(
+                f"{index:>2} {self._fit(pane, name_width)} "
+                f"{self._fit(f'{cpu:.1f}%', 7, align='right')} "
+                f"{self._fit(f'{ram_mib:.0f} MiB', 10, align='right')}"
+            )
+        return output
+
+    def _warning_rows_compact(self, baseline: dict[str, Any], width: int) -> list[str]:
+        warnings = baseline.get("warnings", []) or []
+        if not warnings:
+            return ["OK  No resource warnings in this run."]
+        return [self._fit("! " + str(warning), width) for warning in warnings[:4]]
+
+    def _text_from_lines(self, lines: list[str], style: str, width: int) -> Text:
+        text = Text()
+        for line in lines:
+            text.append(self._fit(line, width), style=style)
+            text.append("\n")
+        return text
+
+    def _cell_width(self, value: str) -> int:
+        return cell_len(value)
 
     def _performance_sidebar(self) -> tuple[str, list[tuple[str, str]]]:
         palette = self._palette
@@ -1254,7 +1478,7 @@ class PerformanceScreen(ModalScreen[None]):
         summary = baseline.get("summary", {})
         warnings = baseline.get("warnings", []) or []
         warning_count = int(summary.get("warning_count", 0))
-        warning_width = 160
+        warning_width = self._dashboard_width()
         warning_inner = warning_width - 2
         lines = ["┌" + ("─" * warning_width) + "┐"]
         warning_title = f"WARNINGS{warning_count:>{warning_inner - len('WARNINGS') - len(' active')}} active"
@@ -1280,14 +1504,20 @@ class PerformanceScreen(ModalScreen[None]):
         summary = baseline.get("summary", {})
         samples = int(summary.get("samples", 0))
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}+"
+        width = self._dashboard_width()
         left = f"PyHerdr   Workspace: {workspace}   Python: {python_version}   Samples: {samples}"
         right = "live data from stats.get"
-        gap = max(2, 190 - cell_len(left) - cell_len(right))
+        show_right = width >= 100
+        gap = max(2, width - cell_len(left) - cell_len(right)) if show_right else 0
 
         text = Text()
-        text.append("PyHerdr", style=f"bold {self._palette.accent}")
+        if not show_right:
+            compact = f"PyHerdr · {workspace} · Python {python_version} · Samples {samples}"
+            text.append(self._fit(compact, width), style=self._palette.subtext0)
+            return text
+        text.append(self._fit("PyHerdr", 6), style=f"bold {self._palette.accent}")
         text.append("   Workspace: ", style=self._palette.subtext0)
-        text.append(workspace, style=f"bold {self._palette.green}")
+        text.append(self._fit(workspace, max(8, min(24, width // 5))), style=f"bold {self._palette.green}")
         text.append(f"   Python: {python_version}   Samples: {samples}", style=self._palette.subtext0)
         text.append(" " * gap)
         text.append(right, style=f"bold {self._palette.accent}")
@@ -3921,6 +4151,14 @@ class PyHerdrTui(App):
             return self._palette.accent if active else self._palette.overlay0
         return self._palette.accent if active else self._palette.surface0
 
+    def _separator_color(self) -> str:
+        style = str(self._config.ui.pane_separator or "subtle").lower()
+        if style == "accent":
+            return self._palette.accent
+        if style == "visible":
+            return self._palette.overlay0
+        return self._palette.panel_bg
+
     def _separator_hover_color(self) -> str:
         style = str(self._config.ui.pane_separator or "subtle").lower()
         if style == "accent":
@@ -3934,7 +4172,7 @@ class PyHerdrTui(App):
         palette = self._palette
         pane_border = self._appearance_color(self._config.ui.pane_border)
         active_pane_border = self._appearance_color(self._config.ui.pane_border, active=True)
-        pane_separator = self._appearance_color(self._config.ui.pane_separator)
+        pane_separator = self._separator_color()
         variables.update(
             {
                 "ph-base": palette.panel_bg,

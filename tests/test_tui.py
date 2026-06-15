@@ -16,6 +16,7 @@ from pyherdr.config import (
 )
 from pyherdr.config.theme import CATPPUCCIN_MOCHA
 from pyherdr.launchers import LauncherPreset
+from pyherdr.performance import build_baseline
 from pyherdr.presentation.tui import (
     CommandPaletteScreen,
     ContextMenuScreen,
@@ -371,6 +372,82 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause(0.1)
             self.assertEqual(screen._selected_view, "Overview")
+
+    def test_performance_screen_layout_mode_tracks_width(self):
+        screen = PerformanceScreen(FakeClient(), CATPPUCCIN_MOCHA, interval=60)
+
+        self.assertEqual(screen._performance_layout_mode(80), "compact")
+        self.assertEqual(screen._performance_layout_mode(120), "medium")
+        self.assertEqual(screen._performance_layout_mode(190), "full")
+
+    def test_performance_screen_renderer_fits_common_terminal_widths(self):
+        screen = PerformanceScreen(FakeClient(), CATPPUCCIN_MOCHA, interval=60)
+        baseline = self._performance_baseline_fixture()
+
+        for width in (80, 120, 190):
+            with self.subTest(width=width):
+                text = screen._render_baseline_for_width(baseline, width).plain
+                lines = text.splitlines()
+                self.assertTrue(lines)
+                self.assertLessEqual(max(screen._cell_width(line) for line in lines), width)
+
+    def _performance_baseline_fixture(self) -> dict:
+        samples = [
+            {
+                "index": 0,
+                "elapsed_seconds": 0.0,
+                "available": True,
+                "pane_count": 4,
+                "running_pane_count": 3,
+                "process_count": 9,
+                "total_cpu_percent": 18.5,
+                "total_rss_bytes": 820 * 1024 * 1024,
+                "warnings": [],
+                "top_panes": [
+                    {
+                        "pane_id": "1-1",
+                        "label": "main · shell · codex-validation-runner",
+                        "agent": "codex",
+                        "cpu_percent": 8.2,
+                        "rss_bytes": 300 * 1024 * 1024,
+                        "num_procs": 3,
+                        "output_lines_per_second": 14.0,
+                    },
+                    {
+                        "pane_id": "1-2",
+                        "label": "main · shell · walter-ssh",
+                        "agent": "shell",
+                        "cpu_percent": 4.1,
+                        "rss_bytes": 220 * 1024 * 1024,
+                        "num_procs": 2,
+                        "output_lines_per_second": 2.0,
+                    },
+                ],
+            },
+            {
+                "index": 1,
+                "elapsed_seconds": 1.0,
+                "available": True,
+                "pane_count": 4,
+                "running_pane_count": 3,
+                "process_count": 10,
+                "total_cpu_percent": 21.5,
+                "total_rss_bytes": 880 * 1024 * 1024,
+                "warnings": ["codex-validation-runner CPU above baseline"],
+                "top_panes": [
+                    {
+                        "pane_id": "1-1",
+                        "label": "main · shell · codex-validation-runner",
+                        "agent": "codex",
+                        "cpu_percent": 12.3,
+                        "rss_bytes": 360 * 1024 * 1024,
+                        "num_procs": 4,
+                        "output_lines_per_second": 20.0,
+                    }
+                ],
+            },
+        ]
+        return build_baseline("responsive-test", samples, 2.0, 1.0)
 
     async def test_renders_a_view_per_pane_in_focused_tab(self):
         app = PyHerdrTui(client=FakeClient(), poll_interval=100)
@@ -1666,6 +1743,11 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.get_css_variables()["ph-sidebar-width"], "46")
 
     def test_pane_appearance_css_variables_follow_config(self):
+        app = PyHerdrTui(client=FakeClient(), poll_interval=100)
+        variables = app.get_css_variables()
+        self.assertEqual(variables["ph-pane-separator"], app._palette.panel_bg)
+        self.assertEqual(variables["ph-pane-border"], app._palette.surface0)
+
         config = Config(ui=UiConfig(pane_separator="accent", pane_border="visible"))
         with patch("pyherdr.presentation.tui.load_config", return_value=config):
             app = PyHerdrTui(client=FakeClient(), poll_interval=100)
