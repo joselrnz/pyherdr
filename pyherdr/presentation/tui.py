@@ -793,7 +793,8 @@ class PerformanceScreen(ModalScreen[None]):
         if self._last_baseline is None:
             return
         width = self._dashboard_width()
-        self._last_layout_mode = self._performance_layout_mode(width)
+        height = self._dashboard_height()
+        self._last_layout_mode = self._performance_layout_mode(width, height)
         self._apply_responsive_widget_layout(self._last_layout_mode)
         self.query_one("#perf-body", Static).update(self._render_baseline(self._last_baseline))
         self.query_one("#perf-help", Static).update(self._render_help_panel())
@@ -851,10 +852,16 @@ class PerformanceScreen(ModalScreen[None]):
             return 190
         return max(56, min(190, raw_width - 6))
 
-    def _performance_layout_mode(self, width: int) -> str:
-        if width < 100:
+    def _dashboard_height(self) -> int:
+        raw_height = int(getattr(self.size, "height", 0) or 0)
+        if raw_height <= 0:
+            return 68
+        return max(20, raw_height - 4)
+
+    def _performance_layout_mode(self, width: int, height: int | None = None) -> str:
+        if width < 100 or (height is not None and height < 32):
             return "compact"
-        if width < 180:
+        if width < 180 or (height is not None and height < 58):
             return "medium"
         return "full"
 
@@ -867,11 +874,14 @@ class PerformanceScreen(ModalScreen[None]):
                 continue
 
     def _render_baseline(self, baseline: dict[str, Any]) -> Text:
-        return self._render_baseline_for_width(baseline, self._dashboard_width())
+        return self._render_baseline_for_size(baseline, self._dashboard_width(), self._dashboard_height())
 
     def _render_baseline_for_width(self, baseline: dict[str, Any], width: int) -> Text:
+        return self._render_baseline_for_size(baseline, width, None)
+
+    def _render_baseline_for_size(self, baseline: dict[str, Any], width: int, height: int | None) -> Text:
         width = max(56, min(190, int(width)))
-        mode = self._performance_layout_mode(width)
+        mode = self._performance_layout_mode(width, height)
         if mode == "compact":
             return self._render_compact_baseline(baseline, width)
         if mode == "medium":

@@ -379,6 +379,8 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(screen._performance_layout_mode(80), "compact")
         self.assertEqual(screen._performance_layout_mode(120), "medium")
         self.assertEqual(screen._performance_layout_mode(190), "full")
+        self.assertEqual(screen._performance_layout_mode(190, 50), "medium")
+        self.assertEqual(screen._performance_layout_mode(90, 68), "compact")
 
     def test_performance_screen_renderer_fits_common_terminal_widths(self):
         screen = PerformanceScreen(FakeClient(), CATPPUCCIN_MOCHA, interval=60)
